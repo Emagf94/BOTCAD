@@ -1,7 +1,7 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_MESSAGES, BOT_SETTINGS } from '../botConfig.js';
 import { getUser } from '../firebase.js';
-import { globalFilesCache, isAdmin, sanitizeFilePath } from '../utils/helpers.js';
+import { globalFilesCache, isAdmin, sanitizeFilePath, getFileReference } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -139,33 +139,38 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
             const name = state.getMyState()?.userName || userDb?.name || 'Cliente';
             const contact = userDb?.contactUser || phoneId;
             
-            const ADMIN_NUMBER = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+            const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+            const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
             const msgAdmin = `📂 *PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO*\n👤 *Cliente:* ${name}\n📱 *Contacto:* ${contact}\n📦 *Total archivos:* ${userFiles.length}`;
             
-            try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch(e){}
-            for (let i = 0; i < userFiles.length; i++) {
-                if (userFiles[i].startsWith('LINK:')) {
-                    const link = userFiles[i].substring(5);
-                    try { await provider.sendMessage(ADMIN_NUMBER, `🔗 *Enlace ${i+1}/${userFiles.length}:* ${link}`, {}); } catch(e){}
-                } else {
-                    const fileRef = userFiles[i]; // Ya debe venir procesado
-                    if (fileRef.startsWith('MSG_ID:')) {
-                        const msgId = fileRef.split(':')[1];
-                        const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                        try {
-                            if (client.forwardMessage) {
-                                await client.forwardMessage(ADMIN_NUMBER, msgId);
-                            } else if (client.forwardMessagesV2) {
-                                await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                            } else {
-                                console.error("No se encontró función de forwardMessage en el cliente WPPConnect.");
-                            }
-                            await provider.sendMessage(ADMIN_NUMBER, `Archivo ${i+1}/${userFiles.length} *(Reenviado)*`, {});
-                        } catch(e) {
-                            console.error("Error al reenviar MSG_ID en faq.flow:", e);
-                        }
+            for (const ADMIN_NUMBER of adminPhones) {
+                try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch(e){}
+                for (let i = 0; i < userFiles.length; i++) {
+                    if (userFiles[i].startsWith('LINK:')) {
+                        const link = userFiles[i].substring(5);
+                        try { await provider.sendMessage(ADMIN_NUMBER, `🔗 *Enlace ${i+1}/${userFiles.length}:* ${link}`, {}); } catch(e){}
                     } else {
-                        try { await provider.sendMedia(ADMIN_NUMBER, fileRef, `Archivo ${i+1}/${userFiles.length}`); } catch(e){}
+                        const fileRef = userFiles[i]; // Ya debe venir procesado
+                        if (fileRef.startsWith('MSG_ID:')) {
+                            const msgId = fileRef.split(':')[1];
+                            const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                            try {
+                                if (client.forwardMessage) {
+                                    await client.forwardMessage(ADMIN_NUMBER, msgId);
+                                } else if (client.forwardMessagesV2) {
+                                    await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
+                                } else {
+                                    console.error("No se encontró función de forwardMessage en el cliente WPPConnect.");
+                                }
+                                await provider.sendMessage(ADMIN_NUMBER, `Archivo ${i+1}/${userFiles.length} *(Reenviado)*`, {});
+                            } catch(e) {
+                                console.error("Error al reenviar MSG_ID en faq.flow:", e);
+                                // Intentar fallback a sendText si falla
+                                try { await provider.sendMessage(ADMIN_NUMBER, `⚠️ Error reenviando el archivo (MSG_ID: ${msgId}). El formato podría no ser compatible o la función falló.`, {}); } catch(err){}
+                            }
+                        } else {
+                            try { await provider.sendMedia(ADMIN_NUMBER, fileRef, `Archivo ${i+1}/${userFiles.length}`); } catch(e){}
+                        }
                     }
                 }
             }

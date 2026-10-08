@@ -46,7 +46,8 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
         }
 
         const data = state.getMyState();
-        const ADMIN_NUMBER = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+        const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+        const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
 
         let detallesArchivos = '';
         if (data.archivosConfig && data.archivosConfig.length > 0) {
@@ -63,14 +64,31 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             `💰 *Total Pagado:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) {}
+        for (const ADMIN_NUMBER of adminPhones) {
+            try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) {}
 
-        for (let i = 0; i < (data.archivos || []).length; i++) {
-            const path = data.archivos[i];
-            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            if (path.startsWith('MSG_ID:')) {
-                const msgId = path.split(':')[1];
+            for (let i = 0; i < (data.archivos || []).length; i++) {
+                const path = data.archivos[i];
+                const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
+                const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
+                if (path.startsWith('MSG_ID:')) {
+                    const msgId = path.split(':')[1];
+                    const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                    try {
+                        if (client.forwardMessage) {
+                            await client.forwardMessage(ADMIN_NUMBER, msgId);
+                        } else if (client.forwardMessagesV2) {
+                            await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
+                        }
+                        await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
+                    } catch(e) {}
+                } else {
+                    try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) {}
+                }
+            }
+            
+            if (comprobantePath.startsWith('MSG_ID:')) {
+                const msgId = comprobantePath.split(':')[1];
                 const client = provider.getInstance ? provider.getInstance() : provider.vendor;
                 try {
                     if (client.forwardMessage) {
@@ -78,26 +96,11 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
                     } else if (client.forwardMessagesV2) {
                         await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
                     }
-                    await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
+                    await provider.sendMessage(ADMIN_NUMBER, '💰 Comprobante de Pago *(Reenviado)*', {});
                 } catch(e) {}
             } else {
-                try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) {}
+                try { await provider.sendMedia(ADMIN_NUMBER, comprobantePath, '💰 Comprobante de Pago'); } catch (e) {}
             }
-        }
-        
-        if (comprobantePath.startsWith('MSG_ID:')) {
-            const msgId = comprobantePath.split(':')[1];
-            const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-            try {
-                if (client.forwardMessage) {
-                    await client.forwardMessage(ADMIN_NUMBER, msgId);
-                } else if (client.forwardMessagesV2) {
-                    await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                }
-                await provider.sendMessage(ADMIN_NUMBER, '💰 Comprobante de Pago *(Reenviado)*', {});
-            } catch(e) {}
-        } else {
-            try { await provider.sendMedia(ADMIN_NUMBER, comprobantePath, '💰 Comprobante de Pago'); } catch (e) {}
         }
 
         await new Promise(r => setTimeout(r, 1500));
@@ -133,7 +136,8 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         const data = state.getMyState();
-        const ADMIN_NUMBER = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+        const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
+        const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
         const rawNumber = ctx.from.split('@')[0];
         
         let detallesArchivos = '';
@@ -151,24 +155,26 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
             `💰 *Total a Cobrar:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) { }
-        for (let i = 0; i < (data.archivos || []).length; i++) {
-            const path = data.archivos[i];
-            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            if (path.startsWith('MSG_ID:')) {
-                const msgId = path.split(':')[1];
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                try {
-                    if (client.forwardMessage) {
-                        await client.forwardMessage(ADMIN_NUMBER, msgId);
-                    } else if (client.forwardMessagesV2) {
-                        await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                    }
-                    await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
-                } catch(e) {}
-            } else {
-                try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) { }
+        for (const ADMIN_NUMBER of adminPhones) {
+            try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) { }
+            for (let i = 0; i < (data.archivos || []).length; i++) {
+                const path = data.archivos[i];
+                const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
+                const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
+                if (path.startsWith('MSG_ID:')) {
+                    const msgId = path.split(':')[1];
+                    const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                    try {
+                        if (client.forwardMessage) {
+                            await client.forwardMessage(ADMIN_NUMBER, msgId);
+                        } else if (client.forwardMessagesV2) {
+                            await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
+                        }
+                        await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
+                    } catch(e) {}
+                } else {
+                    try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) { }
+                }
             }
         }
 
