@@ -1,0 +1,15 @@
+dist/*
+node_modules
+.env
+
+*_sessions
+*tokens
+.wwebjs*
+
+*.log
+logs/
+archivos_recibidos/
+*qr.png
+.firebase/
+.DS_Store
+Thumbs.dbbot_sessions_backup/

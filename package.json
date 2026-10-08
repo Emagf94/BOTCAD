@@ -1,0 +1,43 @@
+{
+  "name": "base-bailey-json",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint . --no-ignore",
+    "dev": "nodemon --signal SIGKILL ./src/app.js",
+    "start": "node ./src/app.js",
+    "bot:24-7": "node ./src/app.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs cad-bot",
+    "pm2:status": "pm2 status",
+    "dashboard:dev": "npm run dev --prefix dashboard",
+    "dashboard:build": "npm run build --prefix dashboard",
+    "hosting:login": "firebase login",
+    "hosting:deploy": "npm run dashboard:build && firebase deploy --only hosting"
+  },
+  "keywords": [],
+  "dependencies": {
+    "@builderbot/bot": "1.4.2",
+    "@builderbot/provider-wppconnect": "^1.4.2",
+    "@wppconnect-team/wppconnect": "^2.3.3",
+    "firebase": "^12.19.0",
+    "node-windows": "^1.0.0-beta.8",
+    "pdf-lib": "^1.17.1",
+    "puppeteer": "^25.12.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.1",
+    "eslint-plugin-builderbot": "latest",
+    "firebase-tools": "^15.32.1",
+    "nodemon": "^3.1.11"
+  },
+  "author": "",
+  "license": "ISC",
+  "overrides": {
+    "@wppconnect-team/wppconnect": "^2.3.3"
+  }
+}
