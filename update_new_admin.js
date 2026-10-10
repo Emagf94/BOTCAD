@@ -11,14 +11,30 @@ async function updateNewAdmin() {
             
             let escapes = data.adminEscapes || [];
             
-            const newAdmin = '573116584423';
+            const newAdmin = '573135363218';
+            const newAdmin2 = '3135363218';
             
             if (!escapes.includes(newAdmin)) {
                 escapes.push(newAdmin);
             }
+            if (!escapes.includes(newAdmin2)) {
+                escapes.push(newAdmin2);
+            }
+
+            let ordersPhone = data.adminOrdersPhone || '573184849332@c.us';
+            if (!ordersPhone.includes(newAdmin)) {
+                ordersPhone += `, ${newAdmin}@c.us`;
+            }
+
+            let supportPhone = data.adminSupportPhone || '573184849332@c.us';
+            if (!supportPhone.includes(newAdmin)) {
+                supportPhone += `, ${newAdmin}@c.us`;
+            }
 
             await updateDoc(ref, {
-                adminEscapes: escapes
+                adminEscapes: escapes,
+                adminOrdersPhone: ordersPhone,
+                adminSupportPhone: supportPhone
             });
             
             console.log(`✅ Permisos de administrador agregados para ${newAdmin}`);

@@ -92,7 +92,7 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender'])
             }
             targetId = pendingSupportQueue.shift();
         } else {
-            let targetPhone = ctx.body.split(' ')[1];
+            let targetPhone = ctx.body.replace(/!chatear/ig, '').trim();
             if (!targetPhone) {
                 await provider.sendMessage(ctx.from, '⚠️ Debes indicar el número: !chatear 573001234567', {});
                 return;

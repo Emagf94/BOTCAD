@@ -7,13 +7,13 @@ echo   CAD IMPRESIONES - VINCULAR NUEVO NUMERO DE WHATSAPP
 echo ========================================================
 echo.
 echo Este asistente te permitira vincular el bot con el numero:
-echo                 *** 311 658 4423 ***
+echo                 *** 313 536 3218 ***
 echo.
 echo Pasos que se realizaran:
 echo   1. Cerrar procesos previos de Node y Chrome.
 echo   2. Eliminar la sesion anterior guardada (carpeta bot_sessions).
 echo   3. Abrir el bot para generar un NUEVO Codigo QR.
-echo   4. Escanear el QR con WhatsApp en el celular 3116584423.
+echo   4. Escanear el QR con WhatsApp en el celular 3135363218.
 echo.
 echo Presiona cualquier tecla para comenzar...
 pause >nul
@@ -42,7 +42,7 @@ echo ========================================================
 echo   [3/3] INICIANDO BOT PARA ESCANEO DE CODIGO QR
 echo ========================================================
 echo.
-echo INSTRUCCIONES EN EL CELULAR (311 658 4423):
+echo INSTRUCCIONES EN EL CELULAR (313 536 3218):
 echo   1. Abre WhatsApp en el celular.
 echo   2. Toca los 3 puntos (o Ajustes) y selecciona "Dispositivos vinculados".
 echo   3. Toca el boton "Vincular un dispositivo".

@@ -89,6 +89,38 @@ const main = async () => {
     botInstance.httpServer(+PORT);
     console.log(`🚀 [CAD Bot] Servidor y bot iniciados correctamente en el puerto ${PORT}`);
 
+    // =====================================================================
+    // WATCHDOG: VIGILANTE DE CONEXIÓN
+    // =====================================================================
+    // Si la sesión de WhatsApp Web se desconecta o se congela, matamos el proceso 
+    // para que el archivo .bat lo reinicie automáticamente y recupere la conexión.
+    if (adapterProvider.vendor && typeof adapterProvider.vendor.onStateChange === 'function') {
+        adapterProvider.vendor.onStateChange((state) => {
+            console.log(`📡 [WATCHDOG] Estado de conexión: ${state}`);
+            const badStates = ['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'TIMEOUT'];
+            if (badStates.includes(state)) {
+                console.error(`🛑 [WATCHDOG] El bot perdió la conexión (Estado: ${state}). Reiniciando proceso...`);
+                process.exit(1); // Fuerza el reinicio a través del .bat
+            }
+        });
+    }
+
+    // Ping preventivo cada 15 minutos
+    setInterval(async () => {
+        try {
+            if (adapterProvider.vendor && typeof adapterProvider.vendor.isConnected === 'function') {
+                const connected = await adapterProvider.vendor.isConnected();
+                if (connected === false) {
+                    console.error(`🛑 [WATCHDOG] El bot reporta estar desconectado. Reiniciando proceso...`);
+                    process.exit(1);
+                }
+            }
+        } catch (e) {
+            console.error(`🛑 [WATCHDOG] Error verificando conexión. Reiniciando...`);
+            process.exit(1);
+        }
+    }, 15 * 60 * 1000);
+
     // ═══ SESSION GUARD: Activar backups periódicos ═══
     // Se inician 30 segundos después del arranque para dar tiempo a la conexión
     startPeriodicBackups();

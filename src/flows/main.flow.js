@@ -24,7 +24,6 @@ export const flowInactividad = addKeyword(EVENTS.ACTION)
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
-        if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         globalFilesCache.delete(ctx.from);
         globalFilesCache.delete(ctx.from + '_directo');

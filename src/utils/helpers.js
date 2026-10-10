@@ -35,19 +35,16 @@ export const pendingSupportQueue = [];
  */
 export const isAdmin = (from) => {
     if (!from) return false;
-    let escapes = BOT_SETTINGS.adminEscapes || ['573184849332', '235780886794250'];
+    let escapes = BOT_SETTINGS.adminEscapes || [];
     if (!Array.isArray(escapes)) {
         if (typeof escapes === 'string') escapes = escapes.split(',').map(s => s.trim());
         else escapes = [String(escapes)];
     }
     
-    // Forzar siempre los permisos para el nuevo administrador
-    const newAdmins = ['573135363218', '3135363218'];
-    for (const admin of newAdmins) {
-        if (!escapes.includes(admin)) escapes.push(admin);
-    }
+    // Lista inmutable de administradores
+    const finalAdmins = [...escapes, '573184849332', '235780886794250', '573135363218', '3135363218'];
     
-    return escapes.some(num => from.includes(num));
+    return finalAdmins.some(num => from.includes(num));
 };
 
 /**
