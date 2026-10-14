@@ -6,6 +6,8 @@ import {
     isAdmin,
     activeBridgeChats,
     validateContactUser,
+    validateName,
+    formatName,
     sanitizeFilePath,
     getFileReference,
     downloadAndSaveIncomingFile
@@ -228,7 +230,13 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
             return fallBack('📎 ¡Archivo recibido! Para registrarte y atenderte, por favor indícanos primero tu *nombre*:');
         }
 
-        const name = rawBody;
+        // Validación estricta del nombre (sin saludos, números ni símbolos)
+        const validationError = validateName(rawBody);
+        if (validationError) {
+            return fallBack(validationError);
+        }
+
+        const name = formatName(rawBody);
         await state.update({ userName: name });
         
         return gotoFlow(flowContactUserCapture);

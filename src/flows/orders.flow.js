@@ -1,6 +1,6 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { saveUser } from '../firebase.js';
-import { isAdmin, validateContactUser } from '../utils/helpers.js';
+import { isAdmin, validateContactUser, validateName, formatName } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 import { flowRecibirArchivos } from './files.flow.js';
@@ -11,9 +11,10 @@ import { flowRecibirArchivos } from './files.flow.js';
 
 export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
     .addAnswer('📱 Debido a las nuevas políticas de privacidad, tu número está oculto. Por favor, escribe tu *número de teléfono o usuario (@)* para contactarte sobre el pedido:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
-        if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
+        if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
-            if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
+            const cmd = ctx.body.trim().toLowerCase();
+            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
@@ -37,16 +38,25 @@ export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
     });
 
 export const flowPedirNombre = addKeyword(EVENTS.ACTION)
-    .addAnswer('👤 Escribe tu *Nombre Completo* para registrar el pedido:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { state, gotoFlow }) => {
-        if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
+    .addAnswer('👤 Escribe tu *Nombre Completo* para registrar el pedido:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
+        if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
-            if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
+            const cmd = ctx.body.trim().toLowerCase();
+            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         if (ctx.body.trim() === '0') return gotoFlow(flowCancelar);
-        await state.update({ nombrePedido: ctx.body.trim(), userName: ctx.body.trim() });
+
+        const rawBody = (ctx.body || '').trim();
+        const validationError = validateName(rawBody);
+        if (validationError) {
+            return fallBack(validationError);
+        }
+
+        const name = formatName(rawBody);
+        await state.update({ nombrePedido: name, userName: name });
         return gotoFlow(flowPedirTelefono);
     });
 
