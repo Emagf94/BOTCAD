@@ -54,6 +54,54 @@ export const MIME_TO_EXT_MAP = {
 };
 
 // ==========================================
+// DETECCIÓN Y EXTRACCIÓN DE ENLACES EN LA NUBE
+// ==========================================
+
+/**
+ * Detecta y extrae enlaces de almacenamiento en la nube (Google Drive, OneDrive, SharePoint, Dropbox, etc.)
+ * o cualquier URL válida contenida en un texto.
+ * @param {string} text Texto a analizar
+ * @returns {Array<string>} Lista de URLs normalizadas (con https://)
+ */
+export const extractCloudLinks = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    
+    // 1. Extraer todas las URLs completas con http/https
+    const urlMatches = text.match(/https?:\/\/[^\s<>"',;()[\]{}]+/gi) || [];
+    
+    // 2. Extraer dominios conocidos de Drive / OneDrive / SharePoint si el usuario no incluyó el protocolo https://
+    const plainDomainMatches = text.match(/(?:(?:drive|docs)\.google\.com|1drv\.ms|onedrive\.live\.com|onedrive\.com|(?:[\w-]+\.)?sharepoint\.com|dropbox\.com|wetransfer\.com|we\.tl|mega\.nz)[^\s<>"',;()[\]{}]*/gi) || [];
+
+    const result = new Set();
+
+    const cleanUrl = (u) => {
+        let res = u.trim();
+        while (res.endsWith('.') || res.endsWith(',') || res.endsWith(';') || res.endsWith('!') || res.endsWith('?')) {
+            res = res.slice(0, -1);
+        }
+        return res;
+    };
+
+    for (const url of urlMatches) {
+        const cleaned = cleanUrl(url);
+        if (cleaned) result.add(cleaned);
+    }
+
+    for (const plain of plainDomainMatches) {
+        const cleaned = cleanUrl(plain);
+        if (!cleaned) continue;
+        const withProtocol = cleaned.startsWith('http://') || cleaned.startsWith('https://') 
+            ? cleaned 
+            : `https://${cleaned}`;
+        if (![...result].some(u => u.includes(cleaned) || cleaned.includes(u))) {
+            result.add(withProtocol);
+        }
+    }
+
+    return Array.from(result);
+};
+
+// ==========================================
 // DETECCIÓN POR MAGIC BYTES
 // ==========================================
 
@@ -488,11 +536,42 @@ export const normalizeAdminJids = (adminPhonesInput) => {
 export const deliverFileToRecipient = async (provider, recipientJid, fileItem, caption = '') => {
     const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
 
-    // Manejo de links
-    if (typeof fileItem === 'string' && fileItem.startsWith('LINK:')) {
-        const link = fileItem.substring(5);
-        await provider.sendMessage(recipientJid, `🔗 ${caption}\n${link}`, {});
-        return { success: true, method: 'link' };
+    // Manejo de enlaces (Google Drive, OneDrive, SharePoint, Dropbox, etc.)
+    const isLink = (typeof fileItem === 'string' && fileItem.startsWith('LINK:')) ||
+                   (typeof fileItem === 'object' && (fileItem.isLink || (typeof fileItem.filePath === 'string' && fileItem.filePath.startsWith('LINK:'))));
+
+    if (isLink) {
+        let rawLink = '';
+        if (typeof fileItem === 'string') {
+            rawLink = fileItem.substring(5).trim();
+        } else {
+            rawLink = (fileItem.filePath && fileItem.filePath.startsWith('LINK:'))
+                ? fileItem.filePath.substring(5).trim()
+                : (fileItem.originalName || fileItem.filePath || '').trim();
+        }
+
+        if (!rawLink.startsWith('http://') && !rawLink.startsWith('https://')) {
+            rawLink = `https://${rawLink}`;
+        }
+
+        let linkMsg = `🔗 *ENLACE COMPARTIDO*\n`;
+        if (caption) {
+            linkMsg += `${caption}\n`;
+        }
+        linkMsg += `${rawLink}`;
+
+        if (typeof fileItem === 'object' && fileItem.comment) {
+            linkMsg += `\n💬 *Nota:* ${fileItem.comment}`;
+        }
+
+        try {
+            await provider.sendMessage(recipientJid, linkMsg, {});
+            console.log(`✅ [FileHandler] Enlace entregado exitosamente a ${recipientJid}: ${rawLink}`);
+            return { success: true, method: 'link' };
+        } catch (errLink) {
+            console.error(`❌ [FileHandler] Error enviando enlace a ${recipientJid}:`, errLink);
+            return { success: false, method: 'link', error: errLink.message };
+        }
     }
 
     // Normalizar datos del archivo
@@ -636,10 +715,25 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
     const adminJids = normalizeAdminJids(adminPhonesConfig || '573184849332@c.us, 573135363218@c.us');
     const { name = 'Cliente', contact = 'Sin especificar', title = 'PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO' } = customerInfo;
 
+    const fileCount = userFiles.filter(item => {
+        const isL = (typeof item === 'object' && item.isLink) || 
+                   (typeof item === 'string' && item.startsWith('LINK:')) || 
+                   (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
+        return !isL;
+    }).length;
+    const linkCount = userFiles.length - fileCount;
+    
+    let itemsDetail = `📦 *Total de elementos:* ${userFiles.length}`;
+    if (linkCount > 0 && fileCount > 0) {
+        itemsDetail += ` (${fileCount} archivo(s), ${linkCount} enlace(s) en la nube)`;
+    } else if (linkCount > 0) {
+        itemsDetail += ` (${linkCount} enlace(s) en la nube)`;
+    }
+
     const summaryMsg = `📂 *${title}*\n` +
                        `👤 *Cliente:* ${name}\n` +
                        `📱 *Contacto:* ${contact}\n` +
-                       `📦 *Total de archivos:* ${userFiles.length}\n` +
+                       `${itemsDetail}\n` +
                        `🕒 *Fecha:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 
     for (const adminJid of adminJids) {
@@ -649,11 +743,16 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
             console.error(`Error enviando resumen a ${adminJid}:`, e);
         }
 
-        // Enviar cada archivo individualmente
+        // Enviar cada archivo o enlace individualmente
         for (let i = 0; i < userFiles.length; i++) {
             const item = userFiles[i];
+            const isLink = (typeof item === 'object' && item.isLink) || 
+                           (typeof item === 'string' && item.startsWith('LINK:')) ||
+                           (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
             const originalName = typeof item === 'object' ? item.originalName : path.basename(item);
-            const caption = `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
+            const caption = isLink 
+                ? `🔗 *Enlace ${i + 1} de ${userFiles.length}:*` 
+                : `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
             await deliverFileToRecipient(provider, adminJid, item, caption);
         }
 

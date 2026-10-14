@@ -6,7 +6,8 @@ import {
     isAdmin,
     sanitizeFilePath,
     getFileReference,
-    downloadAndSaveIncomingFile
+    downloadAndSaveIncomingFile,
+    extractCloudLinks
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
@@ -198,6 +199,12 @@ export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
             globalFilesCache.delete(ctx.from);
             await state.update({ archivosConfig: [], currentFileIndex: 0 });
             return gotoFlow(flowConfigurarArchivoPaso1);
+        }
+
+        const cloudLinks = extractCloudLinks(ctx.body || '');
+        if (cloudLinks.length > 0) {
+            await flowDynamic('💡 *Aviso:* Para configurar pedidos automáticos con cálculo de copias y páginas, necesitamos el archivo físico adjunto (PDF, DWG, etc.).\n\nSi deseas compartir enlaces de Google Drive o OneDrive para que un asesor los revise, escribe *0* para volver al menú principal y elige la opción *7* (*Envío Directo de Archivos*).');
+            return gotoFlow(flowRecibirArchivosLoop);
         }
 
         const archivosFallback = state.getMyState()?.archivos || [];

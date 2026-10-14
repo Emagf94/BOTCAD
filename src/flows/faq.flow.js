@@ -7,7 +7,8 @@ import {
     sanitizeFilePath,
     getFileReference,
     downloadAndSaveIncomingFile,
-    deliverFilePackageToAdmin
+    deliverFilePackageToAdmin,
+    extractCloudLinks
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
@@ -72,7 +73,8 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
-        const texto = (ctx.body || '').trim().toLowerCase();
+        const rawBody = (ctx.body || '').trim();
+        const texto = rawBody.toLowerCase();
         
         if (['0', 'menu', 'menú', 'volver'].includes(texto)) {
             return gotoFlow(flowCancelar);
@@ -86,51 +88,60 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
                         ctx.message?.imageMessage || 
                         ctx.message?.documentMessage;
 
-        const esLinkValido = ctx.body && (
-            texto.includes('drive.google.com') || 
-            texto.includes('docs.google.com') || 
-            texto.includes('1drv.ms') || 
-            texto.includes('onedrive.live.com') || 
-            texto.includes('sharepoint.com')
-        );
+        // Detectar links en el cuerpo del mensaje y en la leyenda (caption)
+        const linksEncontrados = [
+            ...extractCloudLinks(rawBody),
+            ...extractCloudLinks(ctx.caption || ''),
+            ...extractCloudLinks(ctx.message?.imageMessage?.caption || ''),
+            ...extractCloudLinks(ctx.message?.documentMessage?.caption || '')
+        ];
+        const uniqueLinks = [...new Set(linksEncontrados)];
 
-        if (esMedia || esLinkValido) {
+        if (esMedia || uniqueLinks.length > 0) {
             if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
             const userFiles = globalFilesCache.get(ctx.from + '_directo');
 
-            if (esLinkValido && !esMedia) {
-                userFiles.push({
-                    filePath: `LINK:${ctx.body.trim()}`,
-                    originalName: ctx.body.trim(),
-                    isLink: true
-                });
-                
-                await new Promise(r => setTimeout(r, 1000));
-                await provider.sendMessage(ctx.from, `✅ Enlace validado y recibido (${userFiles.length} en total). Puedes enviar más, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
-                return gotoFlow(flowEnvioDirectoArchivosLoop);
+            // 1. Procesar enlaces de nube (Google Drive, OneDrive, SharePoint, etc.)
+            if (uniqueLinks.length > 0) {
+                for (const url of uniqueLinks) {
+                    // Extraer posible nota o comentario del usuario
+                    let comment = rawBody.replace(url, '').trim();
+                    userFiles.push({
+                        filePath: `LINK:${url}`,
+                        originalName: url,
+                        isLink: true,
+                        comment: comment || null
+                    });
+                }
             }
 
-            try {
-                // Descarga segura del archivo con detección de nombre real, extensión y magic bytes
-                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
-                userFiles.push(fileInfo);
+            // 2. Si vino archivo adjunto (documento, foto, etc.), descargarlo
+            if (esMedia) {
+                try {
+                    const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+                    userFiles.push(fileInfo);
 
-                await new Promise(r => setTimeout(r, 1000));
-                const nombreMostrar = fileInfo.originalName || 'Archivo';
-                const cadTag = fileInfo.isCad ? ' 📐 *(AutoCAD CAD detectado)*' : '';
-                await provider.sendMessage(ctx.from, `✅ Archivo recibido: *${nombreMostrar}*${cadTag} (${userFiles.length} en total).\n\nPuedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
-            } catch (err) {
-                console.error("Excepción descargando archivo en Opción 7:", err);
-                const fallbackRef = getFileReference(ctx, null);
-                userFiles.push({
-                    filePath: fallbackRef,
-                    originalName: ctx.filename || 'archivo_adjunto',
-                    ext: 'bin',
-                    isCad: false
-                });
+                    await new Promise(r => setTimeout(r, 1000));
+                    const nombreMostrar = fileInfo.originalName || 'Archivo';
+                    const cadTag = fileInfo.isCad ? ' 📐 *(AutoCAD CAD detectado)*' : '';
+                    await provider.sendMessage(ctx.from, `✅ Archivo recibido: *${nombreMostrar}*${cadTag} (${userFiles.length} en total).\n\nPuedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
+                } catch (err) {
+                    console.error("Excepción descargando archivo en Opción 7:", err);
+                    const fallbackRef = getFileReference(ctx, null);
+                    userFiles.push({
+                        filePath: fallbackRef,
+                        originalName: ctx.filename || 'archivo_adjunto',
+                        ext: 'bin',
+                        isCad: false
+                    });
 
+                    await new Promise(r => setTimeout(r, 1000));
+                    await provider.sendMessage(ctx.from, `✅ Archivo recibido en modo seguro (${userFiles.length} en total). Puedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
+                }
+            } else if (uniqueLinks.length > 0) {
                 await new Promise(r => setTimeout(r, 1000));
-                await provider.sendMessage(ctx.from, `✅ Archivo recibido en modo seguro (${userFiles.length} en total). Puedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
+                const linksList = uniqueLinks.map(l => `  🔗 ${l}`).join('\n');
+                await provider.sendMessage(ctx.from, `✅ *Enlace(s) recibido(s)* (${userFiles.length} en total):\n${linksList}\n\nPuedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
             }
             
             return gotoFlow(flowEnvioDirectoArchivosLoop);
@@ -139,11 +150,11 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         if (texto === '1') {
             const userFiles = globalFilesCache.get(ctx.from + '_directo') || [];
             if (userFiles.length === 0) {
-                await flowDynamic('⚠️ No has enviado archivos. Adjúntalos o envía 0 para cancelar.');
+                await flowDynamic('⚠️ No has enviado archivos ni enlaces. Adjúntalos o escribe 0 para cancelar.');
                 return gotoFlow(flowEnvioDirectoArchivosLoop);
             }
             
-            await flowDynamic('⌛ Enviando archivos al administrador, por favor espera un momento...');
+            await flowDynamic('⌛ Enviando tus archivos y enlaces al administrador, por favor espera un momento...');
             
             const phoneId = ctx.from.split('@')[0];
             const userDb = await getUser(phoneId);
@@ -152,26 +163,26 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
             
             const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us, 573135363218@c.us';
 
-            // Entrega multietapa a todos los administradores (envío directo + .ZIP + fallback)
+            // Entrega multietapa a todos los administradores (envío directo + enlaces + .ZIP consolidado + fallback)
             await deliverFilePackageToAdmin(provider, userFiles, {
                 name,
                 contact,
-                title: 'PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO'
+                title: 'PAQUETE DE ARCHIVOS Y ENLACES DIRECTOS RECIBIDO'
             }, adminPhonesConfig);
             
             globalFilesCache.delete(ctx.from + '_directo');
             
             await new Promise(r => setTimeout(r, 1000));
-            await flowDynamic('✅ ¡Paquete de archivos enviado exitosamente al administrador!\n¿Deseas algo más? (Escribe "hola" para volver a empezar)');
+            await flowDynamic('✅ ¡Paquete enviado exitosamente al administrador!\n¿Deseas algo más? (Escribe "hola" para volver al menú principal)');
             return;
         }
 
         const userFilesFallback = globalFilesCache.get(ctx.from + '_directo') || [];
         await new Promise(r => setTimeout(r, 1500));
         if (userFilesFallback.length > 0) {
-            await flowDynamic('Por favor adjunta los archivos que deseas enviar.\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal');
+            await flowDynamic('Por favor adjunta los archivos o enlaces que deseas enviar.\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal');
         } else {
-            await flowDynamic('Por favor adjunta los archivos que deseas enviar.\n\n*0.* ⬅️ Cancelar y volver al menú principal');
+            await flowDynamic('Por favor adjunta tus archivos (DWG, PDF, Office, imágenes, etc.) o enlaces de Google Drive / OneDrive.\n\n*0.* ⬅️ Cancelar y volver al menú principal');
         }
         return gotoFlow(flowEnvioDirectoArchivosLoop);
     });
@@ -187,23 +198,39 @@ export const flowEnvioDirectoArchivos = addKeyword(EVENTS.ACTION)
 
         const cached = globalFilesCache.get(ctx.from + '_directo') || [];
         if (cached.length > 0) {
-            const fileNames = cached.map((f, i) => `  *${i + 1}.* ${typeof f === 'object' ? f.originalName : (f.startsWith('LINK:') ? f.substring(5) : f)}`).join('\n');
+            const fileNames = cached.map((f, i) => {
+                const isL = (typeof f === 'object' && f.isLink) || (typeof f === 'string' && f.startsWith('LINK:'));
+                const name = typeof f === 'object' ? f.originalName : (f.startsWith('LINK:') ? f.substring(5) : f);
+                return isL ? `  *${i + 1}.* 🔗 ${name}` : `  *${i + 1}.* 📄 ${name}`;
+            }).join('\n');
             await flowDynamic([
-                '📂 *Envío Directo de Archivos*',
-                `✅ Ya tenemos registrado(s) *${cached.length}* archivo(s) que enviaste previamente:\n${fileNames}`,
+                '📂 *Envío Directo de Archivos y Enlaces*',
+                `✅ Ya tenemos registrado(s) *${cached.length}* elemento(s) que enviaste previamente:\n${fileNames}`,
                 '',
-                'Puedes enviar más archivos si lo deseas, o elige una opción:',
+                'Puedes enviar más archivos o enlaces si lo deseas, o elige una opción:',
                 '',
                 '*1.* ✅ Ya envié todos (Enviar al administrador)',
                 '*0.* 🛑 Cancelar y volver al menú principal'
             ].join('\n'));
         } else {
             await flowDynamic([
-                '📂 *Envío Directo de Archivos*',
-                'Por favor, envía por aquí tus archivos (*AutoCAD DWG/DXF*, PDF, imágenes, documentos) o *enlaces de Google Drive / OneDrive* que desees compartir con el administrador.',
+                '📂 *Envío Directo de Archivos y Enlaces*',
+                '',
+                'Por favor, envía por aquí tus archivos o enlaces que desees compartir con el administrador.',
+                '',
+                'Aceptamos una amplia variedad de formatos:',
+                '📐 *Planos y CAD:* AutoCAD (.dwg, .dxf)',
+                '🎨 *Diseño y Gráficos:* Illustrator (.ai), CorelDraw (.cdr), Photoshop (.psd)',
+                '📄 *Documentos:* PDF, Word (.docx, .doc), Excel (.xlsx, .xls), PowerPoint (.pptx, .ppt)',
+                '🖼️ *Imágenes y Fotos:* JPG, PNG, WEBP',
+                '📦 *Comprimidos:* ZIP, RAR',
+                '🔗 *Enlaces en la nube:* Google Drive, OneDrive, SharePoint, etc.',
+                '',
+                '_Puedes enviar varios archivos o enlaces seguidos._',
                 '',
                 '🛑 *0.* Cancelar y volver al menú principal'
             ].join('\n'));
         }
         return gotoFlow(flowEnvioDirectoArchivosLoop);
     });
+

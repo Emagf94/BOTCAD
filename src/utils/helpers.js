@@ -200,6 +200,7 @@ export const formatName = (rawName) => {
 
 import {
     extractFileMetadata,
+    extractCloudLinks,
     serializeMessageId,
     downloadAndSaveIncomingFile,
     deliverFileToRecipient,
@@ -212,6 +213,7 @@ import {
 
 export {
     extractFileMetadata,
+    extractCloudLinks,
     serializeMessageId,
     downloadAndSaveIncomingFile,
     deliverFileToRecipient,

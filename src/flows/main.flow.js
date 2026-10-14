@@ -10,7 +10,8 @@ import {
     formatName,
     sanitizeFilePath,
     getFileReference,
-    downloadAndSaveIncomingFile
+    downloadAndSaveIncomingFile,
+    extractCloudLinks
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
 import { flowEnvioDirectoArchivos, flowPagosFAQ, flowFAQ } from './faq.flow.js';
@@ -54,7 +55,7 @@ export const flowCancelar = addKeyword(EVENTS.ACTION)
             } else {
                 await provider.sendMedia(ctx.from, './assets/chat_f.webp', '');
             }
-        } catch(e) {}
+        } catch (e) { }
         return gotoFlow(flowMainMenu);
     });
 
@@ -85,12 +86,12 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
             if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
             const rawBody = (ctx.body || '').trim();
-            const esArchivo = rawBody.includes('_event_media_') || 
-                              rawBody.includes('_event_document_') || 
-                              rawBody.includes('_event_voice_note_') || 
-                              ctx.hasMedia || 
-                              ctx.message?.imageMessage || 
-                              ctx.message?.documentMessage;
+            const esArchivo = rawBody.includes('_event_media_') ||
+                rawBody.includes('_event_document_') ||
+                rawBody.includes('_event_voice_note_') ||
+                ctx.hasMedia ||
+                ctx.message?.imageMessage ||
+                ctx.message?.documentMessage;
 
             if (esArchivo) {
                 downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
@@ -113,6 +114,20 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                     await state.update({ archivos: [...currentFiles, filePath] });
                 });
                 return fallBack('📎 *Archivo recibido y guardado.* Por favor, selecciona una opción del *1 al 10* para saber cómo procesarlo (ej: *1* Carteleras, *2* Planos, *3* Documentos, *7* Envío Directo al Asesor):');
+            }
+
+            const cloudLinks = extractCloudLinks(rawBody);
+            if (cloudLinks.length > 0) {
+                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                const directFiles = globalFilesCache.get(ctx.from + '_directo');
+                for (const l of cloudLinks) {
+                    directFiles.push({
+                        filePath: `LINK:${l}`,
+                        originalName: l,
+                        isLink: true
+                    });
+                }
+                return fallBack('🔗 *Enlace recibido y guardado.* Por favor, selecciona una opción del *1 al 10* para procesarlo (te sugerimos la opción *7* para Envío Directo al Asesor):');
             }
 
             const op = rawBody;
@@ -154,7 +169,7 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
     );
 
 export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
-    .addAnswer('📱 Debido a las nuevas políticas de privacidad, tu número está oculto. Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, state, provider, fallBack }) => {
+    .addAnswer('📱 Debido a las nuevas políticas de privacidad de Whatsapp, tu número está oculto. Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, state, provider, fallBack }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
@@ -164,12 +179,12 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         const rawBody = (ctx.body || '').trim();
-        const esArchivo = rawBody.includes('_event_media_') || 
-                          rawBody.includes('_event_document_') || 
-                          rawBody.includes('_event_voice_note_') || 
-                          ctx.hasMedia || 
-                          ctx.message?.imageMessage || 
-                          ctx.message?.documentMessage;
+        const esArchivo = rawBody.includes('_event_media_') ||
+            rawBody.includes('_event_document_') ||
+            rawBody.includes('_event_voice_note_') ||
+            ctx.hasMedia ||
+            ctx.message?.imageMessage ||
+            ctx.message?.documentMessage;
 
         if (esArchivo) {
             downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
@@ -184,6 +199,20 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
             return fallBack('📎 ¡Archivo recibido! Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:');
         }
 
+        const cloudLinks = extractCloudLinks(rawBody);
+        if (cloudLinks.length > 0) {
+            if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+            const directFiles = globalFilesCache.get(ctx.from + '_directo');
+            for (const l of cloudLinks) {
+                directFiles.push({
+                    filePath: `LINK:${l}`,
+                    originalName: l,
+                    isLink: true
+                });
+            }
+            return fallBack('🔗 ¡Enlace recibido! Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:');
+        }
+
         const contactUser = rawBody;
         const errorMsg = validateContactUser(contactUser);
         if (errorMsg) {
@@ -192,10 +221,10 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
 
         const phone = ctx.from.split('@')[0];
         const name = state.getMyState()?.userName || '';
-        
+
         await saveUser(phone, { name, contactUser: contactUser });
         await state.update({ contactUser: contactUser });
-        
+
         return gotoFlow(flowWelcomeRegistered);
     });
 
@@ -210,12 +239,12 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         const rawBody = (ctx.body || '').trim();
-        const esArchivo = rawBody.includes('_event_media_') || 
-                          rawBody.includes('_event_document_') || 
-                          rawBody.includes('_event_voice_note_') || 
-                          ctx.hasMedia || 
-                          ctx.message?.imageMessage || 
-                          ctx.message?.documentMessage;
+        const esArchivo = rawBody.includes('_event_media_') ||
+            rawBody.includes('_event_document_') ||
+            rawBody.includes('_event_voice_note_') ||
+            ctx.hasMedia ||
+            ctx.message?.imageMessage ||
+            ctx.message?.documentMessage;
 
         if (esArchivo) {
             downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
@@ -238,7 +267,7 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
 
         const name = formatName(rawBody);
         await state.update({ userName: name });
-        
+
         return gotoFlow(flowContactUserCapture);
     });
 
@@ -276,18 +305,18 @@ export const flowWelcome = addKeyword([
 
         const rawBody = (ctx.body || '').trim().toLowerCase();
         const isMenuReturn = ['0', 'menu', 'menú', 'volver', 'inicio'].includes(rawBody);
-        
+
         if (isMenuReturn) {
             return gotoFlow(flowMainMenu);
         }
 
         // Detectar si el usuario envió un archivo o multimedia en su primera interacción
-        const esArchivoInicial = rawBody.includes('_event_media_') || 
-                                 rawBody.includes('_event_document_') || 
-                                 rawBody.includes('_event_voice_note_') || 
-                                 ctx.hasMedia || 
-                                 ctx.message?.imageMessage || 
-                                 ctx.message?.documentMessage;
+        const esArchivoInicial = rawBody.includes('_event_media_') ||
+            rawBody.includes('_event_document_') ||
+            rawBody.includes('_event_voice_note_') ||
+            ctx.hasMedia ||
+            ctx.message?.imageMessage ||
+            ctx.message?.documentMessage;
 
         if (esArchivoInicial) {
             downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
@@ -329,7 +358,7 @@ export const flowWelcome = addKeyword([
 
         const phone = ctx.from.split('@')[0];
         const user = await getUser(phone);
-        
+
         if (user && user.name) {
             await state.update({ userName: user.name, contactUser: user.contactUser || '' });
             await new Promise(r => setTimeout(r, 1500));
@@ -338,7 +367,7 @@ export const flowWelcome = addKeyword([
                 await flowDynamic([{ media: './assets/logo.png' }]);
                 await new Promise(r => setTimeout(r, 1000));
                 await flowDynamic([msg]);
-            } catch(e) {
+            } catch (e) {
                 await flowDynamic([msg]);
             }
             return gotoFlow(flowMainMenu);
@@ -349,7 +378,7 @@ export const flowWelcome = addKeyword([
                 await flowDynamic([{ media: './assets/logo.png' }]);
                 await new Promise(r => setTimeout(r, 1000));
                 await flowDynamic([msg]);
-            } catch(e) {
+            } catch (e) {
                 await flowDynamic([msg]);
             }
             return gotoFlow(flowNameCapture);
