@@ -9,7 +9,10 @@ node_modules
 *.log
 logs/
 archivos_recibidos/
+downloads/
+temp_files/
 *qr.png
 .firebase/
 .DS_Store
-Thumbs.dbbot_sessions_backup/
+Thumbs.db
+bot_sessions_backup/

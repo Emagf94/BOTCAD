@@ -93,9 +93,33 @@ export const validateContactUser = (contactUser) => {
     return null;
 };
 
+import {
+    extractFileMetadata,
+    serializeMessageId,
+    downloadAndSaveIncomingFile,
+    deliverFileToRecipient,
+    deliverFilePackageToAdmin,
+    createZipArchive,
+    normalizeAdminJids,
+    CAD_EXTENSIONS,
+    SPECIAL_EXTENSIONS
+} from './fileHandler.js';
+
+export {
+    extractFileMetadata,
+    serializeMessageId,
+    downloadAndSaveIncomingFile,
+    deliverFileToRecipient,
+    deliverFilePackageToAdmin,
+    createZipArchive,
+    normalizeAdminJids,
+    CAD_EXTENSIONS,
+    SPECIAL_EXTENSIONS
+};
+
 /**
- * Sanitiza la ruta de un archivo descargado, corrigiendo extensiones incorrectas (.false, etc.)
- * usando el nombre original del documento en el contexto del mensaje.
+ * Sanitiza la ruta de un archivo descargado, corrigiendo extensiones incorrectas (.false, .bin)
+ * usando el nombre original del documento en el contexto de WPPConnect/Baileys y Magic Bytes.
  * @param {string} filePath La ruta local del archivo descargado
  * @param {object} ctx El contexto del mensaje de WhatsApp
  * @returns {string} La nueva ruta del archivo corregido
@@ -104,18 +128,20 @@ export const sanitizeFilePath = (filePath, ctx) => {
     if (!filePath || filePath.startsWith('MSG_ID:') || filePath === 'ERROR') return filePath;
     
     try {
-        const originalName = ctx?.message?.documentMessage?.fileName || 
-                             ctx?.message?.imageMessage?.fileName || 
-                             ctx?.message?.videoMessage?.fileName || 
-                             ctx?.message?.audioMessage?.fileName || 
-                             `archivo_${Date.now()}.bin`;
-                             
-        // Extraer la extensión original
-        const originalExt = originalName.includes('.') ? originalName.split('.').pop().toLowerCase() : 'bin';
+        if (!fs.existsSync(filePath)) return filePath;
+
+        // Leer buffer para inspección de Magic Bytes
+        let buf = null;
+        try {
+            buf = fs.readFileSync(filePath);
+        } catch (e) {}
+
+        const metadata = extractFileMetadata(ctx, buf);
+        const originalExt = metadata.ext;
         const currentExt = filePath.split('.').pop().toLowerCase();
         
-        // Si el provider le asignó extensión .false o no coincide con la original en documentos
-        if (currentExt === 'false' || (ctx?.message?.documentMessage && currentExt !== originalExt)) {
+        // Si el provider le asignó extensión .false, o .bin cuando la real es conocida (ej. dwg)
+        if (currentExt === 'false' || (currentExt !== originalExt && originalExt !== 'bin')) {
             const dir = path.dirname(filePath);
             const baseName = path.basename(filePath, `.${currentExt}`);
             const newPath = path.join(dir, `${baseName}.${originalExt}`);
@@ -134,22 +160,23 @@ export const sanitizeFilePath = (filePath, ctx) => {
 
 /**
  * Devuelve la referencia adecuada para reenviar un archivo.
- * Si `filePath` es válido y su extensión es correcta, lo devuelve.
- * En caso contrario (extensión .false, error, etc.) devuelve un token MSG_ID
- * basado en el mensaje original, que luego será reenviado con `forwardMessage`.
+ * Si `filePath` es válido y existe físicamente, lo devuelve.
+ * Si falló, devuelve un token MSG_ID con el ID serializado correcto para WPPConnect.
  * @param {object} ctx Contexto del mensaje recibido.
  * @param {string} filePath Ruta del archivo devuelta por saveFile.
  * @returns {string} Ruta válida o `MSG_ID:<id>`.
  */
 export const getFileReference = (ctx, filePath) => {
-    // Si ya es un MSG_ID (fallback anterior) o ERROR, lo conservamos.
+    const validMsgId = serializeMessageId(ctx);
+
+    // Si ya es un MSG_ID (fallback anterior) o ERROR, lo conservamos con el id limpio.
     if (!filePath || filePath.startsWith('MSG_ID') || filePath === 'ERROR') {
-        return `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
+        return `MSG_ID:${validMsgId}`;
     }
-    // Extensión .false → fallback a MSG_ID.
+    // Extensión .false que no pudo renombrarse → fallback a MSG_ID limpio.
     const ext = filePath.split('.').pop().toLowerCase();
     if (ext === 'false') {
-        return `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
+        return `MSG_ID:${validMsgId}`;
     }
     // Todo bien → devolver la ruta.
     return filePath;

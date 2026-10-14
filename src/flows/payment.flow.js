@@ -1,6 +1,6 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -33,11 +33,8 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
 
         let comprobantePath;
         try {
-            comprobantePath = await provider.saveFile(ctx);
-            if (!comprobantePath || comprobantePath === 'ERROR') {
-                comprobantePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
-                if (comprobantePath === 'MSG_ID:') throw new Error("File download failed and no ID found");
-            }
+            const savedMedia = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+            comprobantePath = savedMedia.filePath;
         } catch (err) {
             console.error("Error al guardar comprobante:", err);
             await new Promise(r => setTimeout(r, 1500));
@@ -45,9 +42,8 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             return gotoFlow(flowRecibirPagoLoop);
         }
 
-        const data = state.getMyState();
-        const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
-        const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
+        const data = state.getMyState() || {};
+        const adminPhones = normalizeAdminJids(BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us, 573135363218@c.us');
 
         let detallesArchivos = '';
         if (data.archivosConfig && data.archivosConfig.length > 0) {
@@ -68,39 +64,13 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) {}
 
             for (let i = 0; i < (data.archivos || []).length; i++) {
-                const path = data.archivos[i];
+                const pathItem = data.archivos[i];
                 const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
                 const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-                if (path.startsWith('MSG_ID:')) {
-                    const msgId = path.split(':')[1];
-                    const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                    try {
-                        if (client.forwardMessage) {
-                            await client.forwardMessage(ADMIN_NUMBER, msgId);
-                        } else if (client.forwardMessagesV2) {
-                            await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                        }
-                        await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
-                    } catch(e) {}
-                } else {
-                    try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) {}
-                }
+                await deliverFileToRecipient(provider, ADMIN_NUMBER, pathItem, caption);
             }
             
-            if (comprobantePath.startsWith('MSG_ID:')) {
-                const msgId = comprobantePath.split(':')[1];
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                try {
-                    if (client.forwardMessage) {
-                        await client.forwardMessage(ADMIN_NUMBER, msgId);
-                    } else if (client.forwardMessagesV2) {
-                        await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                    }
-                    await provider.sendMessage(ADMIN_NUMBER, '💰 Comprobante de Pago *(Reenviado)*', {});
-                } catch(e) {}
-            } else {
-                try { await provider.sendMedia(ADMIN_NUMBER, comprobantePath, '💰 Comprobante de Pago'); } catch (e) {}
-            }
+            await deliverFileToRecipient(provider, ADMIN_NUMBER, comprobantePath, '💰 Comprobante de Pago');
         }
 
         await new Promise(r => setTimeout(r, 1500));
@@ -158,23 +128,10 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
         for (const ADMIN_NUMBER of adminPhones) {
             try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) { }
             for (let i = 0; i < (data.archivos || []).length; i++) {
-                const path = data.archivos[i];
+                const pathItem = data.archivos[i];
                 const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
                 const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-                if (path.startsWith('MSG_ID:')) {
-                    const msgId = path.split(':')[1];
-                    const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                    try {
-                        if (client.forwardMessage) {
-                            await client.forwardMessage(ADMIN_NUMBER, msgId);
-                        } else if (client.forwardMessagesV2) {
-                            await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                        }
-                        await provider.sendMessage(ADMIN_NUMBER, caption + '\n*(Archivo reenviado)*', {});
-                    } catch(e) {}
-                } else {
-                    try { await provider.sendMedia(ADMIN_NUMBER, path, caption); } catch (e) { }
-                }
+                await deliverFileToRecipient(provider, ADMIN_NUMBER, pathItem, caption);
             }
         }
 

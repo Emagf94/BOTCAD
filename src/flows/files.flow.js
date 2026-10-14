@@ -1,7 +1,13 @@
 import fs from 'fs';
 import { PDFDocument } from 'pdf-lib';
 import { addKeyword, EVENTS } from '@builderbot/bot';
-import { globalFilesCache, isAdmin, sanitizeFilePath } from '../utils/helpers.js';
+import {
+    globalFilesCache,
+    isAdmin,
+    sanitizeFilePath,
+    getFileReference,
+    downloadAndSaveIncomingFile
+} from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 import { flowResumenPedido } from './payment.flow.js';
@@ -121,28 +127,28 @@ export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
         const texto = (ctx.body || '').trim().toLowerCase();
         if (['0', 'menu', 'menú', 'volver'].includes(texto)) { globalFilesCache.delete(ctx.from); return gotoFlow(flowCancelar); }
 
-        const esMedia = texto.includes('_media_') || texto.includes('_document_') || texto.includes('_image_') || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage;
+        const esMedia = texto.includes('_media_') || 
+                        texto.includes('_document_') || 
+                        texto.includes('_image_') || 
+                        ctx.hasMedia || 
+                        ctx.mimetype ||
+                        ctx.message?.imageMessage || 
+                        ctx.message?.documentMessage;
 
         if (esMedia) {
-            provider.saveFile(ctx).then(async (path) => {
-                let filePath = path;
-                filePath = sanitizeFilePath(filePath, ctx);
-                filePath = getFileReference(ctx, filePath);
-                
-                if (filePath === 'MSG_ID:') {
-                    await provider.sendMessage(ctx.from, `❌ Hubo un error al descargar tu archivo. Por favor, asegúrate de que el formato sea válido e intenta enviarlo de nuevo.`, {});
-                    return;
-                }
-                const data = state.getMyState();
+            try {
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+                let filePath = fileInfo.filePath;
+                const ext = fileInfo.ext;
+
+                const data = state.getMyState() || {};
                 const itemName = data.itemName || '';
                 const requiresPDF = itemName.startsWith('Documento') || itemName.startsWith('Sello');
                 const isCartelera = itemName.startsWith('Cartelera');
                 const isPlano = itemName.startsWith('Plano');
                 const requiresRestrictedExts = requiresPDF || isCartelera || isPlano;
-                
-                if (!filePath.startsWith('MSG_ID:')) {
-                    const ext = filePath.split('.').pop().toLowerCase();
 
+                if (!filePath.startsWith('MSG_ID:')) {
                     let allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
                     if (isCartelera) {
                         allowedExts.push('ppt', 'pptx');
@@ -151,13 +157,13 @@ export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
                     }
 
                     if (requiresRestrictedExts && !allowedExts.includes(ext)) {
-                        try { fs.unlinkSync(filePath); } catch(e) {}
+                        try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch(e) {}
                         await new Promise(r => setTimeout(r, 1000));
                         let formatMsg = '*PDF o Imágenes*';
                         if (isCartelera) formatMsg = '*PDF, Imágenes o PowerPoint*';
                         else if (isPlano) formatMsg = '*PDF, Imágenes o AutoCAD (DWG/DXF)*';
                         await provider.sendMessage(ctx.from, `⚠️ *Atención:* Para ${itemName.split(' ')[0]}s, solo aceptamos archivos en formato ${formatMsg}. Por favor convierte tu archivo y envíalo nuevamente.`, {});
-                        return;
+                        return gotoFlow(flowRecibirArchivosLoop);
                     }
                 }
 
@@ -166,21 +172,19 @@ export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
                 userFiles.push(filePath);
                 await state.update({ archivos: userFiles });
                 await new Promise(r => setTimeout(r, 1000));
-                await provider.sendMessage(ctx.from, `✅ Archivo recibido (${userFiles.length} en total). Puedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Continuar)\n*0.* ⬅️ Cancelar`, {});
-            }).catch(async (err) => {
-                console.error("Excepción en saveFile (files.flow):", err);
-                const filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
-                if (filePath === 'MSG_ID:') {
-                    await provider.sendMessage(ctx.from, `❌ Hubo un error al procesar tu archivo. Por favor, asegúrate de que el formato sea válido e intenta enviarlo de nuevo.`, {});
-                    return;
-                }
+                const nombreMostrar = fileInfo.originalName || 'Archivo';
+                const cadTag = fileInfo.isCad ? ' 📐 *(AutoCAD CAD)*' : '';
+                await provider.sendMessage(ctx.from, `✅ Archivo recibido: *${nombreMostrar}*${cadTag} (${userFiles.length} en total).\n\nPuedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Continuar)\n*0.* ⬅️ Cancelar`, {});
+            } catch (err) {
+                console.error("Excepción en recepción de archivo (files.flow):", err);
+                const filePath = getFileReference(ctx, null);
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 const userFiles = globalFilesCache.get(ctx.from);
                 userFiles.push(filePath);
                 await state.update({ archivos: userFiles });
                 await new Promise(r => setTimeout(r, 1000));
                 await provider.sendMessage(ctx.from, `✅ Archivo recibido en modo seguro (${userFiles.length} en total). Puedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Continuar)\n*0.* ⬅️ Cancelar`, {});
-            });
+            }
             
             return gotoFlow(flowRecibirArchivosLoop);
         }

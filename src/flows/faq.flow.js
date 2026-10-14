@@ -1,7 +1,14 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_MESSAGES, BOT_SETTINGS } from '../botConfig.js';
 import { getUser } from '../firebase.js';
-import { globalFilesCache, isAdmin, sanitizeFilePath, getFileReference } from '../utils/helpers.js';
+import {
+    globalFilesCache,
+    isAdmin,
+    sanitizeFilePath,
+    getFileReference,
+    downloadAndSaveIncomingFile,
+    deliverFilePackageToAdmin
+} from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -71,7 +78,13 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
             return gotoFlow(flowCancelar);
         }
 
-        const esMedia = texto.includes('_media_') || texto.includes('_document_') || texto.includes('_image_') || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage;
+        const esMedia = texto.includes('_media_') || 
+                        texto.includes('_document_') || 
+                        texto.includes('_image_') || 
+                        ctx.hasMedia || 
+                        ctx.mimetype ||
+                        ctx.message?.imageMessage || 
+                        ctx.message?.documentMessage;
 
         const esLinkValido = ctx.body && (
             texto.includes('drive.google.com') || 
@@ -82,45 +95,43 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         );
 
         if (esMedia || esLinkValido) {
+            if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+            const userFiles = globalFilesCache.get(ctx.from + '_directo');
+
             if (esLinkValido && !esMedia) {
-                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                const userFiles = globalFilesCache.get(ctx.from + '_directo');
-                userFiles.push(`LINK:${ctx.body.trim()}`);
+                userFiles.push({
+                    filePath: `LINK:${ctx.body.trim()}`,
+                    originalName: ctx.body.trim(),
+                    isLink: true
+                });
                 
                 await new Promise(r => setTimeout(r, 1000));
                 await provider.sendMessage(ctx.from, `✅ Enlace validado y recibido (${userFiles.length} en total). Puedes enviar más, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
                 return gotoFlow(flowEnvioDirectoArchivosLoop);
             }
 
-            provider.saveFile(ctx).then(async (path) => {
-                let filePath = path;
-                filePath = sanitizeFilePath(filePath, ctx);
-                filePath = getFileReference(ctx, filePath);
-                
-                if (filePath === 'MSG_ID:') {
-                    await provider.sendMessage(ctx.from, `❌ Hubo un error al descargar tu archivo. Por favor, asegúrate de que el formato sea válido e intenta enviarlo de nuevo.`, {});
-                    return;
-                }
-                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                const userFiles = globalFilesCache.get(ctx.from + '_directo');
-                userFiles.push(filePath);
-                
+            try {
+                // Descarga segura del archivo con detección de nombre real, extensión y magic bytes
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+                userFiles.push(fileInfo);
+
                 await new Promise(r => setTimeout(r, 1000));
-                await provider.sendMessage(ctx.from, `✅ Archivo recibido (${userFiles.length} en total). Puedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
-            }).catch(async (err) => {
-                console.error("Excepción en saveFile (faq.flow):", err);
-                const filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
-                if (filePath === 'MSG_ID:') {
-                    await provider.sendMessage(ctx.from, `❌ Hubo un error al procesar tu archivo. Por favor, asegúrate de que el formato sea válido e intenta enviarlo de nuevo.`, {});
-                    return;
-                }
-                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                const userFiles = globalFilesCache.get(ctx.from + '_directo');
-                userFiles.push(filePath);
-                
+                const nombreMostrar = fileInfo.originalName || 'Archivo';
+                const cadTag = fileInfo.isCad ? ' 📐 *(AutoCAD CAD detectado)*' : '';
+                await provider.sendMessage(ctx.from, `✅ Archivo recibido: *${nombreMostrar}*${cadTag} (${userFiles.length} en total).\n\nPuedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
+            } catch (err) {
+                console.error("Excepción descargando archivo en Opción 7:", err);
+                const fallbackRef = getFileReference(ctx, null);
+                userFiles.push({
+                    filePath: fallbackRef,
+                    originalName: ctx.filename || 'archivo_adjunto',
+                    ext: 'bin',
+                    isCad: false
+                });
+
                 await new Promise(r => setTimeout(r, 1000));
                 await provider.sendMessage(ctx.from, `✅ Archivo recibido en modo seguro (${userFiles.length} en total). Puedes enviar más archivos si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
-            });
+            }
             
             return gotoFlow(flowEnvioDirectoArchivosLoop);
         }
@@ -132,48 +143,21 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
                 return gotoFlow(flowEnvioDirectoArchivosLoop);
             }
             
-            await flowDynamic('⌛ Enviando archivos al administrador, por favor espera...');
+            await flowDynamic('⌛ Enviando archivos al administrador, por favor espera un momento...');
             
             const phoneId = ctx.from.split('@')[0];
             const userDb = await getUser(phoneId);
             const name = state.getMyState()?.userName || userDb?.name || 'Cliente';
             const contact = userDb?.contactUser || phoneId;
             
-            const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
-            const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
-            const msgAdmin = `📂 *PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO*\n👤 *Cliente:* ${name}\n📱 *Contacto:* ${contact}\n📦 *Total archivos:* ${userFiles.length}`;
-            
-            for (const ADMIN_NUMBER of adminPhones) {
-                try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch(e){}
-                for (let i = 0; i < userFiles.length; i++) {
-                    if (userFiles[i].startsWith('LINK:')) {
-                        const link = userFiles[i].substring(5);
-                        try { await provider.sendMessage(ADMIN_NUMBER, `🔗 *Enlace ${i+1}/${userFiles.length}:* ${link}`, {}); } catch(e){}
-                    } else {
-                        const fileRef = userFiles[i]; // Ya debe venir procesado
-                        if (fileRef.startsWith('MSG_ID:')) {
-                            const msgId = fileRef.split(':')[1];
-                            const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                            try {
-                                if (client.forwardMessage) {
-                                    await client.forwardMessage(ADMIN_NUMBER, msgId);
-                                } else if (client.forwardMessagesV2) {
-                                    await client.forwardMessagesV2(ADMIN_NUMBER, [msgId]);
-                                } else {
-                                    console.error("No se encontró función de forwardMessage en el cliente WPPConnect.");
-                                }
-                                await provider.sendMessage(ADMIN_NUMBER, `Archivo ${i+1}/${userFiles.length} *(Reenviado)*`, {});
-                            } catch(e) {
-                                console.error("Error al reenviar MSG_ID en faq.flow:", e);
-                                // Intentar fallback a sendText si falla
-                                try { await provider.sendMessage(ADMIN_NUMBER, `⚠️ Error reenviando el archivo (MSG_ID: ${msgId}). El formato podría no ser compatible o la función falló.`, {}); } catch(err){}
-                            }
-                        } else {
-                            try { await provider.sendMedia(ADMIN_NUMBER, fileRef, `Archivo ${i+1}/${userFiles.length}`); } catch(e){}
-                        }
-                    }
-                }
-            }
+            const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us, 573135363218@c.us';
+
+            // Entrega multietapa a todos los administradores (envío directo + .ZIP + fallback)
+            await deliverFilePackageToAdmin(provider, userFiles, {
+                name,
+                contact,
+                title: 'PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO'
+            }, adminPhonesConfig);
             
             globalFilesCache.delete(ctx.from + '_directo');
             
@@ -203,16 +187,23 @@ export const flowEnvioDirectoArchivos = addKeyword(EVENTS.ACTION)
 
         const cached = globalFilesCache.get(ctx.from + '_directo') || [];
         if (cached.length > 0) {
+            const fileNames = cached.map((f, i) => `  *${i + 1}.* ${typeof f === 'object' ? f.originalName : (f.startsWith('LINK:') ? f.substring(5) : f)}`).join('\n');
             await flowDynamic([
                 '📂 *Envío Directo de Archivos*',
-                `✅ Ya tenemos registrado(s) ${cached.length} archivo(s) que enviaste.`,
+                `✅ Ya tenemos registrado(s) *${cached.length}* archivo(s) que enviaste previamente:\n${fileNames}`,
+                '',
                 'Puedes enviar más archivos si lo deseas, o elige una opción:',
                 '',
                 '*1.* ✅ Ya envié todos (Enviar al administrador)',
                 '*0.* 🛑 Cancelar y volver al menú principal'
             ].join('\n'));
         } else {
-            await flowDynamic(['📂 *Envío Directo de Archivos*', 'Por favor, envía por aquí los archivos (PDF, imágenes, documentos) o *enlaces de Google Drive / OneDrive* que desees compartir con el administrador.', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'));
+            await flowDynamic([
+                '📂 *Envío Directo de Archivos*',
+                'Por favor, envía por aquí tus archivos (*AutoCAD DWG/DXF*, PDF, imágenes, documentos) o *enlaces de Google Drive / OneDrive* que desees compartir con el administrador.',
+                '',
+                '🛑 *0.* Cancelar y volver al menú principal'
+            ].join('\n'));
         }
         return gotoFlow(flowEnvioDirectoArchivosLoop);
     });

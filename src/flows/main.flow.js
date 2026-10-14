@@ -1,7 +1,15 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_MESSAGES, BOT_CUSTOM_NODES, renderMessage } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
-import { globalFilesCache, isAdmin, activeBridgeChats, validateContactUser, sanitizeFilePath } from '../utils/helpers.js';
+import {
+    globalFilesCache,
+    isAdmin,
+    activeBridgeChats,
+    validateContactUser,
+    sanitizeFilePath,
+    getFileReference,
+    downloadAndSaveIncomingFile
+} from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
 import { flowEnvioDirectoArchivos, flowPagosFAQ, flowFAQ } from './faq.flow.js';
 import {
@@ -81,27 +89,25 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                               ctx.message?.documentMessage;
 
             if (esArchivo) {
-                if (provider?.saveFile) {
-                    provider.saveFile(ctx).then(async (path) => {
-                        let filePath = path;
-                        filePath = sanitizeFilePath(filePath, ctx);
-                        if (!filePath || filePath === 'ERROR') filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
-                        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
-                        globalFilesCache.get(ctx.from).push(filePath);
-                        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                        globalFilesCache.get(ctx.from + '_directo').push(filePath);
-                        const currentFiles = state.getMyState()?.archivos || [];
-                        await state.update({ archivos: [...currentFiles, filePath] });
-                    }).catch(async e => {
-                        const filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
-                        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
-                        globalFilesCache.get(ctx.from).push(filePath);
-                        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                        globalFilesCache.get(ctx.from + '_directo').push(filePath);
-                        const currentFiles = state.getMyState()?.archivos || [];
-                        await state.update({ archivos: [...currentFiles, filePath] });
-                    });
-                }
+                downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+                    const filePath = fileInfo.filePath;
+                    if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                    globalFilesCache.get(ctx.from).push(filePath);
+                    if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                    globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
+                    const currentFiles = state.getMyState()?.archivos || [];
+                    await state.update({ archivos: [...currentFiles, filePath] });
+                    console.log(`[CAD Bot] Archivo de menú principal guardado: ${fileInfo.originalName}`);
+                }).catch(async (e) => {
+                    console.error("Error guardando archivo en flowMainMenu:", e);
+                    const filePath = getFileReference(ctx, null);
+                    if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                    globalFilesCache.get(ctx.from).push(filePath);
+                    if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                    globalFilesCache.get(ctx.from + '_directo').push(filePath);
+                    const currentFiles = state.getMyState()?.archivos || [];
+                    await state.update({ archivos: [...currentFiles, filePath] });
+                });
                 return fallBack('📎 *Archivo recibido y guardado.* Por favor, selecciona una opción del *1 al 10* para saber cómo procesarlo (ej: *1* Carteleras, *2* Planos, *3* Documentos, *7* Envío Directo al Asesor):');
             }
 
@@ -161,18 +167,15 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
                           ctx.message?.documentMessage;
 
         if (esArchivo) {
-            if (provider?.saveFile) {
-                provider.saveFile(ctx).then(async (path) => {
-                    if (path && path !== 'ERROR') {
-                        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
-                        globalFilesCache.get(ctx.from).push(path);
-                        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                        globalFilesCache.get(ctx.from + '_directo').push(path);
-                        const currentFiles = state.getMyState()?.archivos || [];
-                        await state.update({ archivos: [...currentFiles, path] });
-                    }
-                }).catch(e => console.error(e));
-            }
+            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+                const filePath = fileInfo.filePath;
+                if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                globalFilesCache.get(ctx.from).push(filePath);
+                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
+                const currentFiles = state.getMyState()?.archivos || [];
+                await state.update({ archivos: [...currentFiles, filePath] });
+            }).catch(e => console.error(e));
             return fallBack('📎 ¡Archivo recibido! Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:');
         }
 
@@ -209,18 +212,15 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
                           ctx.message?.documentMessage;
 
         if (esArchivo) {
-            if (provider?.saveFile) {
-                provider.saveFile(ctx).then(async (path) => {
-                    if (path && path !== 'ERROR') {
-                        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
-                        globalFilesCache.get(ctx.from).push(path);
-                        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                        globalFilesCache.get(ctx.from + '_directo').push(path);
-                        const currentFiles = state.getMyState()?.archivos || [];
-                        await state.update({ archivos: [...currentFiles, path] });
-                    }
-                }).catch(e => console.error(e));
-            }
+            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+                const filePath = fileInfo.filePath;
+                if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                globalFilesCache.get(ctx.from).push(filePath);
+                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
+                const currentFiles = state.getMyState()?.archivos || [];
+                await state.update({ archivos: [...currentFiles, filePath] });
+            }).catch(e => console.error(e));
             return fallBack('📎 ¡Archivo recibido! Para registrarte y atenderte, por favor indícanos primero tu *nombre*:');
         }
 
@@ -275,19 +275,18 @@ export const flowWelcome = addKeyword([
                                  ctx.message?.imageMessage || 
                                  ctx.message?.documentMessage;
 
-        if (esArchivoInicial && provider?.saveFile) {
-            provider.saveFile(ctx).then(async (path) => {
-                let filePath = path;
-                if (!path || path === 'ERROR') filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
+        if (esArchivoInicial) {
+            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+                const filePath = fileInfo.filePath;
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
                 if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
-                globalFilesCache.get(ctx.from + '_directo').push(filePath);
+                globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
                 const currentFiles = state.getMyState()?.archivos || [];
                 await state.update({ archivos: [...currentFiles, filePath] });
-                console.log(`[CAD Bot] Archivo de bienvenida guardado para ${ctx.from}`);
-            }).catch(async e => {
-                const filePath = `MSG_ID:${ctx.id || (ctx.key && ctx.key.id) || ''}`;
+                console.log(`[CAD Bot] Archivo de bienvenida guardado: ${fileInfo.originalName}`);
+            }).catch(async (e) => {
+                const filePath = getFileReference(ctx, null);
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
                 if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);

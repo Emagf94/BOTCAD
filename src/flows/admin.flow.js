@@ -1,7 +1,7 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS } from '../botConfig.js';
 import { getUser } from '../firebase.js';
-import { isWorkingHour, isAdmin, pendingSupportQueue, activeBridgeChats, sanitizeFilePath, getFileReference } from '../utils/helpers.js';
+import { isWorkingHour, isAdmin, pendingSupportQueue, activeBridgeChats, sanitizeFilePath, getFileReference, downloadAndSaveIncomingFile, deliverFileToRecipient } from '../utils/helpers.js';
 import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
 
@@ -47,21 +47,8 @@ export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
 
         if (esMedia) {
             try {
-                let path = await provider.saveFile(ctx);
-                path = sanitizeFilePath(path, ctx);
-                const fileRef = getFileReference(ctx, path);
-                if (fileRef.startsWith('MSG_ID:')) {
-                    const msgId = fileRef.split(':')[1];
-                    const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                    if (client.forwardMessage) {
-                        await client.forwardMessage(clientPhone, msgId);
-                    } else if (client.forwardMessagesV2) {
-                        await client.forwardMessagesV2(clientPhone, [msgId]);
-                    }
-                    await provider.sendMessage(clientPhone, `👨‍💻 *Asesor:* [Archivo reenviado] ${caption}`, {});
-                } else {
-                    await provider.sendMedia(clientPhone, fileRef, `👨‍💻 *Asesor:* ${caption}`);
-                }
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+                await deliverFileToRecipient(provider, clientPhone, fileInfo, `👨‍💻 *Asesor:* ${caption}`);
             } catch (err) {
                 console.error("Error bridge media admin:", err);
                 await provider.sendMessage(clientPhone, `👨‍💻 *Asesor:* [Archivo/Audio enviado]`, {});
@@ -207,21 +194,8 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
 
     if (esMedia) {
         try {
-            let path = await provider.saveFile(ctx);
-            path = sanitizeFilePath(path, ctx);
-            const fileRef = getFileReference(ctx, path);
-            if (fileRef.startsWith('MSG_ID:')) {
-                const msgId = fileRef.split(':')[1];
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                if (client.forwardMessage) {
-                    await client.forwardMessage(adminPhone, msgId);
-                } else if (client.forwardMessagesV2) {
-                    await client.forwardMessagesV2(adminPhone, [msgId]);
-                }
-                await provider.sendMessage(adminPhone, `👤 *Cliente:* [Archivo reenviado] ${caption}`, {});
-            } else {
-                await provider.sendMedia(adminPhone, fileRef, `👤 *Cliente:* ${caption}`);
-            }
+            const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+            await deliverFileToRecipient(provider, adminPhone, fileInfo, `👤 *Cliente:* ${caption}`);
         } catch (e) {
             console.error("Error bridge media:", e);
             await provider.sendMessage(adminPhone, `👤 *Cliente:* [Archivo/Audio recibido]`, {});
