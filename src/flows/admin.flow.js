@@ -1,9 +1,106 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS } from '../botConfig.js';
 import { getUser } from '../firebase.js';
-import { isWorkingHour, isAdmin, pendingSupportQueue, activeBridgeChats, sanitizeFilePath, getFileReference, downloadAndSaveIncomingFile, deliverFileToRecipient } from '../utils/helpers.js';
+import {
+    isWorkingHour,
+    isAdmin,
+    pendingSupportQueue,
+    activeBridgeChats,
+    sanitizeFilePath,
+    getFileReference,
+    downloadAndSaveIncomingFile,
+    deliverFileToRecipient,
+    normalizeAdminJids
+} from '../utils/helpers.js';
 import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
+
+// ==========================================
+// HELPERS DE SOPORTE Y NOTIFICACIÓN
+// ==========================================
+
+/**
+ * Notifica a todos los asesores autorizados cuando un cliente es atendido por un asesor.
+ * Informa quién fue atendido, quién lo atendió y cuántos clientes quedan en cola.
+ */
+export const notifyAdvisorsClientAttended = async (provider, { advisorPhone, targetId, clientName, remainingCount }) => {
+    try {
+        const rawClientPhone = targetId ? String(targetId).split('@')[0] : '';
+        const rawAdvisorPhone = advisorPhone ? String(advisorPhone).split('@')[0] : 'Asesor';
+
+        let name = clientName;
+        if (!name && rawClientPhone) {
+            try {
+                const userDoc = await getUser(rawClientPhone);
+                if (userDoc?.name) name = userDoc.name;
+            } catch (e) {}
+        }
+        name = name || 'Cliente';
+
+        const queueInfo = remainingCount > 0
+            ? `⏳ *Clientes en espera:* ${remainingCount} pendiente(s)`
+            : `✅ *Cola de espera:* No hay clientes pendientes (cola vacía)`;
+
+        const broadcastMsg = `🔔 *Atención de Soporte Iniciada*\n\n` +
+            `👤 *Cliente:* ${name}\n` +
+            `📱 *Teléfono:* ${rawClientPhone} (wa.me/${rawClientPhone})\n` +
+            `👨‍💻 *Atendido por:* ${rawAdvisorPhone}\n\n` +
+            `${queueInfo}`;
+
+        const adminPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
+        for (const phoneJid of adminPhones) {
+            try {
+                await provider.sendMessage(phoneJid, broadcastMsg, {});
+            } catch (err) {
+                console.error(`Error enviando notificación broadcast a ${phoneJid}:`, err);
+            }
+        }
+    } catch (err) {
+        console.error("Error en notifyAdvisorsClientAttended:", err);
+    }
+};
+
+/**
+ * Finaliza de forma limpia la sesión de soporte activo entre un asesor y un cliente.
+ * Notifica al cliente y envía sticker de fin de chat si está disponible.
+ */
+export const endActiveSupportChat = async (provider, adminFrom) => {
+    try {
+        let clientPhone = activeBridgeChats.get(adminFrom);
+        if (!clientPhone) {
+            for (const [key, val] of activeBridgeChats.entries()) {
+                if (key.includes(adminFrom) || adminFrom.includes(key)) {
+                    clientPhone = val;
+                    activeBridgeChats.delete(key);
+                    break;
+                }
+            }
+        }
+
+        if (clientPhone) {
+            activeBridgeChats.delete(clientPhone);
+            activeBridgeChats.delete(adminFrom);
+
+            try {
+                await provider.sendMessage(clientPhone, '👨‍💻 *El asesor ha finalizado el chat.* Volviendo al menú principal...', {});
+            } catch (e) {}
+
+            try {
+                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                if (client && client.sendImageAsSticker) {
+                    await client.sendImageAsSticker(clientPhone, './assets/chat_f.webp');
+                } else {
+                    await provider.sendMedia(clientPhone, './assets/chat_f.webp', '');
+                }
+            } catch(e) {}
+
+            return { success: true, clientPhone };
+        }
+    } catch (e) {
+        console.error("Error en endActiveSupportChat:", e);
+    }
+    return { success: false };
+};
 
 // ==========================================
 // FLUJOS DE ADMINISTRACIÓN Y ASESOR
@@ -11,34 +108,39 @@ import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
 
 export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
     .addAction({ capture: true, idle: 3600000 }, async (ctx, { fallBack, endFlow, provider }) => {
-        if (!isAdmin(ctx.from)) return;
-        if (ctx?.idleFallBack) {
-            const clientPhone = activeBridgeChats.get(ctx.from);
-            if (clientPhone) {
-                activeBridgeChats.delete(clientPhone);
-                activeBridgeChats.delete(ctx.from);
-                
-                // No es necesario usar blacklist aquí, el control se maneja nativamente.
+        if (!isAdmin(ctx)) return;
 
-                await provider.sendMessage(clientPhone, '👨‍💻 *La sesión con el asesor ha finalizado.*', {});
-            }
+        if (ctx?.idleFallBack) {
+            await endActiveSupportChat(provider, ctx.from);
             return endFlow('⏳ Sesión de soporte terminada por inactividad.');
         }
 
         const clientPhone = activeBridgeChats.get(ctx.from);
         if (!clientPhone) return endFlow('❌ El chat ha expirado o el cliente se fue.');
 
-        if (ctx.body.trim().toLowerCase() === '!fin') {
-            activeBridgeChats.delete(clientPhone);
-            activeBridgeChats.delete(ctx.from);
-            
-            // No es necesario usar blacklist aquí, el control se maneja nativamente.
+        const bodyTrim = (ctx.body || '').trim();
+        const bodyLower = bodyTrim.toLowerCase();
 
-            await provider.sendMessage(clientPhone, '👨‍💻 *El asesor ha finalizado el chat.* Volviendo al menú principal...', {});
+        if (bodyLower === '!fin') {
+            await endActiveSupportChat(provider, ctx.from);
             return endFlow('✅ Chat finalizado. Has salido del modo soporte.');
         }
 
-        const esMedia = (ctx.body && (ctx.body.includes('_media_') || ctx.body.includes('_document_') || ctx.body.includes('_image_') || ctx.body.includes('_voice_note_') || ctx.body.includes('_video_') || ctx.body.includes('_event_forward_'))) || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage || ctx.message?.videoMessage || ctx.message?.audioMessage || ctx.message?.forwardedMessage?.imageMessage || ctx.message?.forwardedMessage?.documentMessage || ctx.message?.forwardedMessage?.videoMessage || ctx.message?.forwardedMessage?.audioMessage;
+        if (bodyLower.startsWith('!cola') || bodyLower.startsWith('!estado')) {
+            const count = pendingSupportQueue.length;
+            const qMsg = count === 0
+                ? '📋 *Estado de Cola:* No hay clientes esperando soporte.'
+                : `📋 *Estado de Cola:* Hay ${count} cliente(s) en espera de soporte.`;
+            await provider.sendMessage(ctx.from, qMsg, {});
+            return fallBack();
+        }
+
+        if (bodyLower.startsWith('!atender') || bodyLower.startsWith('!chatear')) {
+            await provider.sendMessage(ctx.from, '⚠️ Ya tienes una conversación activa con un cliente. Escribe *!fin* para terminarla antes de atender a otro.', {});
+            return fallBack();
+        }
+
+        const esMedia = (ctx.body && (ctx.body.includes('_media_') || ctx.body.includes('_document_') || ctx.body.includes('_image_') || ctx.body.includes('_voice_note_') || ctx.body.includes('_video_') || ctx.body.includes('_event_forward_'))) || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage || ctx.message?.videoMessage || ctx.message?.audioMessage || ctx.message?.forwardedMessage?.imageMessage || ctx.message?.forwardedMessage?.documentMessage || ctx.message?.videoMessage || ctx.message?.forwardedMessage?.audioMessage;
         
         let caption = ctx.body || '';
         if (caption.includes('_event_') || caption.includes('_media_') || caption.includes('_document_') || caption.includes('_image_') || caption.includes('_voice_note_') || caption.includes('_video_') || caption.includes('_event_forward_') || caption.includes('reenviado')) {
@@ -59,19 +161,51 @@ export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
         return fallBack();
     });
 
-export const flowAdminBridge = addKeyword(['!chatear', '!atender'])
+export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!cola', '!estado'])
     .addAction(async (ctx, { provider, gotoFlow }) => {
         console.log("=== [DEBUG ADMIN BRIDGE] ===");
         console.log("FROM:", ctx.from, "BODY:", ctx.body);
         console.log("QUEUE:", pendingSupportQueue);
-        if (!isAdmin(ctx.from)) {
-            console.log("ABORT: ctx.from does not include admin number");
+        if (!isAdmin(ctx)) {
+            console.log("ABORT: ctx is not authorized admin");
             return;
         }
         
+        const txt = (ctx.body || '').trim().toLowerCase();
+
+        // 1. Comando !fin
+        if (txt.startsWith('!fin')) {
+            const res = await endActiveSupportChat(provider, ctx.from);
+            if (res.success) {
+                const rawPhone = res.clientPhone.split('@')[0];
+                await provider.sendMessage(ctx.from, `✅ Chat con ${rawPhone} finalizado. Has salido del modo soporte.`, {});
+            } else {
+                await provider.sendMessage(ctx.from, 'ℹ️ No tienes ningún chat de soporte activo en este momento.', {});
+            }
+            return;
+        }
+
+        // 2. Comandos !cola o !estado
+        if (txt.startsWith('!cola') || txt.startsWith('!estado')) {
+            const count = pendingSupportQueue.length;
+            if (count === 0) {
+                await provider.sendMessage(ctx.from, '📋 *Estado de Cola:* No hay clientes esperando soporte en este momento.', {});
+            } else {
+                let listMsg = `📋 *Clientes en Cola de Soporte (${count}):*\n\n`;
+                for (let i = 0; i < pendingSupportQueue.length; i++) {
+                    const qPhone = pendingSupportQueue[i].split('@')[0];
+                    listMsg += `${i + 1}. ${qPhone} (wa.me/${qPhone})\n`;
+                }
+                listMsg += `\nPara atender al primer cliente, escribe *!atender*`;
+                await provider.sendMessage(ctx.from, listMsg, {});
+            }
+            return;
+        }
+
+        // 3. Comandos !atender o !chatear
         let targetId;
-        const txt = ctx.body.trim().toLowerCase();
-        
+        let clientName = 'Cliente';
+
         if (txt.startsWith('!atender')) {
             if (pendingSupportQueue.length === 0) {
                 await provider.sendMessage(ctx.from, '⚠️ No hay clientes en espera de soporte.', {});
@@ -102,19 +236,33 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender'])
             }
         }
         
+        // Si el asesor ya tenía otro chat activo, cerrarlo previamente
+        const previousChat = activeBridgeChats.get(ctx.from);
+        if (previousChat && previousChat !== targetId) {
+            await endActiveSupportChat(provider, ctx.from);
+        }
+
         activeBridgeChats.set(ctx.from, targetId);
         activeBridgeChats.set(targetId, ctx.from);
 
-        // El bot se silenciará automáticamente al entrar al flujo captivo
-        
         const rawTargetPhone = targetId.split('@')[0];
         const queueIndex = pendingSupportQueue.indexOf(rawTargetPhone);
         if (queueIndex > -1) pendingSupportQueue.splice(queueIndex, 1);
-        
+        const queueIndexJid = pendingSupportQueue.indexOf(targetId);
+        if (queueIndexJid > -1) pendingSupportQueue.splice(queueIndexJid, 1);
+
+        // Obtener el nombre del cliente si está registrado
+        try {
+            const userDb = await getUser(rawTargetPhone);
+            if (userDb?.name) clientName = userDb.name;
+        } catch (e) {}
+
         try {
             await provider.sendMessage(targetId, '👨‍💻 *Un asesor se ha unido al chat. Puedes escribirle ahora.*', {});
         } catch (err) {
             await provider.sendMessage(ctx.from, `❌ Error: No se pudo conectar con el cliente ${rawTargetPhone}. Es posible que el número sea inválido.`, {});
+            activeBridgeChats.delete(ctx.from);
+            activeBridgeChats.delete(targetId);
             return;
         }
 
@@ -129,14 +277,26 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender'])
             console.error("Error emitiendo captura para cliente:", e);
         }
         
-        await provider.sendMessage(ctx.from, '✅ Conectado al cliente. Todo lo que escribas se enviará. Escribe *!fin* para terminar.', {});
+        await provider.sendMessage(ctx.from, `✅ Conectado al cliente ${clientName} (${rawTargetPhone}). Todo lo que escribas se enviará. Escribe *!fin* para terminar.`, {});
+
+        // Notificar inmediatamente a TODOS los asesores quién fue atendido y cuántos quedan en cola
+        await notifyAdvisorsClientAttended(provider, {
+            advisorPhone: ctx.from,
+            targetId: targetId,
+            clientName: clientName,
+            remainingCount: pendingSupportQueue.length
+        });
+
         return gotoFlow(flowAdminBridgeLoop);
     });
 
 export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider }) => {
-    if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
+    if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
         console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
-        if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
+        const cmd = ctx.body.trim().toLowerCase();
+        if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) {
+            return gotoFlow(flowAdminBridge);
+        }
         return gotoFlow(flowAdminBridgeLoop);
     }
     if (ctx?.idleFallBack) {
@@ -149,7 +309,7 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
         return gotoFlow(flowInactividad);
     }
 
-    const txt = ctx.body.trim().toLowerCase();
+    const txt = (ctx.body || '').trim().toLowerCase();
     if (txt === '0' || txt === 'salir') {
         const adminPhone = activeBridgeChats.get(ctx.from);
         if (adminPhone) {
@@ -157,13 +317,15 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
             activeBridgeChats.delete(ctx.from);
             await provider.sendMessage(adminPhone, `❌ El cliente ha finalizado el chat de soporte.`, {});
         }
+        const qIdx = pendingSupportQueue.indexOf(ctx.from);
+        if (qIdx > -1) pendingSupportQueue.splice(qIdx, 1);
         return gotoFlow(flowCancelar);
     }
 
     const adminPhone = activeBridgeChats.get(ctx.from);
     if (!adminPhone) {
         if (!isWorkingHour()) {
-            const txt = ctx.body.trim().toLowerCase();
+            const txt = (ctx.body || '').trim().toLowerCase();
             if (txt === '0' || txt === 'salir') return gotoFlow(flowCancelar);
             return fallBack();
         }
@@ -172,7 +334,7 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
             await provider.sendMessage(ctx.from, '⏳ Aún estamos conectando con un asesor, por favor espera un momento...', {});
             return fallBack();
         } else {
-            // The admin has ended the chat (!fin) and removed them from active chats.
+            // El asesor finalizó el chat (!fin)
             try {
                 const client = provider.getInstance ? provider.getInstance() : provider.vendor;
                 if (client && client.sendImageAsSticker) {
@@ -232,24 +394,21 @@ export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
         const finalName = name || 'Cliente';
         const finalPhone = dbPhone || phoneId;
 
-        pendingSupportQueue.push(ctx.from);
-        const position = pendingSupportQueue.length;
+        if (!pendingSupportQueue.includes(ctx.from)) {
+            pendingSupportQueue.push(ctx.from);
+        }
+        const position = pendingSupportQueue.indexOf(ctx.from) + 1;
         const pendingCount = position > 1 ? ` (+${position - 1} en espera)` : '';
         
         try {
-            let supportPhonesStr = BOT_SETTINGS.adminSupportPhone || BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
-            if (Array.isArray(supportPhonesStr)) supportPhonesStr = supportPhonesStr.join(',');
-            const supportPhones = String(supportPhonesStr).split(',').map(s => s.trim()).filter(s => s);
-            
-            // Garantizar que el nuevo administrador también reciba las notificaciones
-            if (!supportPhones.find(p => p.includes('3135363218'))) {
-                supportPhones.push('573135363218@c.us');
-            }
-            
+            const supportPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
             const msgAdmin = `🆘 *Solicitud de Soporte*\n👤 Cliente: ${finalName}\n📱 Teléfono: ${finalPhone} (wa.me/${phoneId})\n\nPara atender este chat, envía:\n*!atender*${pendingCount}`;
+            
             for (const phone of supportPhones) {
                 const targetId = phone.includes('@') ? phone : `${phone}@c.us`;
-                try { await provider.sendMessage(targetId, msgAdmin, {}) } catch(e){}
+                try {
+                    await provider.sendMessage(targetId, msgAdmin, {});
+                } catch(e) {}
             }
         } catch (error) {
             console.error("Error enviando mensaje a asesores:", error);

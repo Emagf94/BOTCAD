@@ -446,25 +446,31 @@ export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './
  * @returns {Array<string>} Lista de JIDs normalizados
  */
 export const normalizeAdminJids = (adminPhonesInput) => {
-    if (!adminPhonesInput) return ['573184849332@c.us'];
     let list = [];
     if (Array.isArray(adminPhonesInput)) {
         list = adminPhonesInput;
     } else if (typeof adminPhonesInput === 'string') {
         list = adminPhonesInput.split(',');
-    } else {
+    } else if (adminPhonesInput) {
         list = [String(adminPhonesInput)];
     }
 
-    return list
-        .map(s => s.trim())
+    const result = list
+        .map(s => String(s).trim())
         .filter(Boolean)
         .map(num => {
-            const digits = num.replace(/[^0-9]/g, '');
+            let digits = num.replace(/[^0-9]/g, '');
             if (!digits) return null;
+            if (digits.length === 10) digits = '57' + digits;
             return `${digits}@c.us`;
         })
         .filter(Boolean);
+
+    // Asegurar que ambos administradores autorizados siempre estén incluidos
+    if (!result.some(j => j.includes('3184849332'))) result.push('573184849332@c.us');
+    if (!result.some(j => j.includes('3135363218'))) result.push('573135363218@c.us');
+
+    return [...new Set(result)];
 };
 
 /**

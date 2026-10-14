@@ -124,7 +124,7 @@ export const BOT_MEDIA = {
 export const BOT_SETTINGS = {
     adminOrdersPhone: '573184849332@c.us, 573135363218@c.us',
     adminSupportPhone: '573184849332@c.us, 573135363218@c.us',
-    adminEscapes: ['573184849332', '235780886794250', '573135363218', '3135363218'],
+    adminEscapes: ['573184849332', '235780886794250', '573135363218', '3135363218', '13770403381354'],
     botName: 'Cadi',
     inactivityMinutes: 10
 };

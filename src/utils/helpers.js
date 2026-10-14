@@ -29,22 +29,47 @@ export const pendingSupportQueue = [];
 // ==========================================
 
 /**
- * Verifica si un número de remitente corresponde a un administrador autorizado.
- * @param {string} from - Identificador del remitente (ej. "573184849332@c.us")
+ * Verifica si un remitente o contexto de mensaje corresponde a un administrador autorizado.
+ * Soporta números directos, IDs con sufijo @c.us, y LIDs de WhatsApp (@lid).
+ * @param {string|object} fromOrCtx - Identificador del remitente o contexto del mensaje (ctx)
  * @returns {boolean} true si es administrador
  */
-export const isAdmin = (from) => {
-    if (!from) return false;
+export const isAdmin = (fromOrCtx) => {
+    if (!fromOrCtx) return false;
+    
+    let candidates = [];
+    if (typeof fromOrCtx === 'string') {
+        candidates.push(fromOrCtx);
+    } else if (typeof fromOrCtx === 'object') {
+        if (fromOrCtx.from) candidates.push(fromOrCtx.from);
+        if (fromOrCtx.author) candidates.push(fromOrCtx.author);
+        if (fromOrCtx.sender?.id) candidates.push(fromOrCtx.sender.id);
+        if (fromOrCtx.sender?.phone) candidates.push(fromOrCtx.sender.phone);
+        if (fromOrCtx._data?.from) candidates.push(fromOrCtx._data.from);
+        if (fromOrCtx._data?.id?.participant) candidates.push(fromOrCtx._data.id.participant);
+        if (fromOrCtx.key?.remoteJid) candidates.push(fromOrCtx.key.remoteJid);
+        if (fromOrCtx.key?.participant) candidates.push(fromOrCtx.key.participant);
+    }
+    
+    if (candidates.length === 0) return false;
+
     let escapes = BOT_SETTINGS.adminEscapes || [];
     if (!Array.isArray(escapes)) {
         if (typeof escapes === 'string') escapes = escapes.split(',').map(s => s.trim());
         else escapes = [String(escapes)];
     }
     
-    // Lista inmutable de administradores
-    const finalAdmins = [...escapes, '573184849332', '235780886794250', '573135363218', '3135363218'];
+    // Lista inmutable de administradores autorizados
+    const finalAdmins = [
+        ...escapes,
+        '573184849332',
+        '235780886794250',
+        '573135363218',
+        '3135363218',
+        '13770403381354'
+    ];
     
-    return finalAdmins.some(num => from.includes(num));
+    return candidates.some(cand => finalAdmins.some(admin => String(cand).includes(admin)));
 };
 
 /**
