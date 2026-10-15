@@ -90,34 +90,47 @@ const main = async () => {
     console.log(`🚀 [CAD Bot] Servidor y bot iniciados correctamente en el puerto ${PORT}`);
 
     // =====================================================================
-    // WATCHDOG: VIGILANTE DE CONEXIÓN
+    // WATCHDOG: VIGILANTE DE CONEXIÓN RESILIENTE
     // =====================================================================
-    // Si la sesión de WhatsApp Web se desconecta o se congela, matamos el proceso 
-    // para que el archivo .bat lo reinicie automáticamente y recupere la conexión.
+    // Solo si la sesión de WhatsApp Web sufre un fallo terminal irrecuperable
+    // o pierde conectividad de forma persistente, reiniciamos el proceso.
     if (adapterProvider.vendor && typeof adapterProvider.vendor.onStateChange === 'function') {
         adapterProvider.vendor.onStateChange((state) => {
             console.log(`📡 [WATCHDOG] Estado de conexión: ${state}`);
-            const badStates = ['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'TIMEOUT'];
-            if (badStates.includes(state)) {
-                console.error(`🛑 [WATCHDOG] El bot perdió la conexión (Estado: ${state}). Reiniciando proceso...`);
+            // NOTA: 'TIMEOUT' y 'DISCONNECTED' transitorios se ignoran para permitir auto-reconexión de WPPConnect.
+            // Solo estados terminales definitivos provocan reinicio.
+            const fatalStates = ['CONFLICT', 'UNPAIRED', 'UNLAUNCHED'];
+            if (fatalStates.includes(state)) {
+                console.error(`🛑 [WATCHDOG] Estado terminal irrecuperable detectado (${state}). Reiniciando proceso...`);
                 process.exit(1); // Fuerza el reinicio a través del .bat
             }
         });
     }
 
-    // Ping preventivo cada 15 minutos
+    // Ping preventivo cada 15 minutos con tolerancia a fallos transitorios (3 intentos consecutivos)
+    let consecutivePingFailures = 0;
     setInterval(async () => {
         try {
             if (adapterProvider.vendor && typeof adapterProvider.vendor.isConnected === 'function') {
                 const connected = await adapterProvider.vendor.isConnected();
                 if (connected === false) {
-                    console.error(`🛑 [WATCHDOG] El bot reporta estar desconectado. Reiniciando proceso...`);
-                    process.exit(1);
+                    consecutivePingFailures++;
+                    console.warn(`⚠️ [WATCHDOG] El bot reporta estar desconectado (${consecutivePingFailures}/3). Esperando reintento...`);
+                    if (consecutivePingFailures >= 3) {
+                        console.error(`🛑 [WATCHDOG] 3 fallos consecutivos de conexión reportados. Reiniciando proceso...`);
+                        process.exit(1);
+                    }
+                    return;
                 }
             }
+            consecutivePingFailures = 0;
         } catch (e) {
-            console.error(`🛑 [WATCHDOG] Error verificando conexión. Reiniciando...`);
-            process.exit(1);
+            consecutivePingFailures++;
+            console.warn(`⚠️ [WATCHDOG] Error transitorio verificando conexión (${consecutivePingFailures}/3): ${e.message}`);
+            if (consecutivePingFailures >= 3) {
+                console.error(`🛑 [WATCHDOG] 3 errores consecutivos verificando conexión. Reiniciando...`);
+                process.exit(1);
+            }
         }
     }, 15 * 60 * 1000);
 

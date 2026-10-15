@@ -406,6 +406,25 @@ export const createZipArchive = (files, outputPath) => {
  *   msgId: string
  * }>}
  */
+/**
+ * Envuelve una promesa con un tiempo límite máximo.
+ * Evita que descargas de archivos pesados o bloqueos de red cuelguen el bot indefinidamente.
+ * @param {Promise} promise Promesa a ejecutar
+ * @param {number} ms Tiempo en milisegundos antes de timeout (defecto: 30000)
+ * @param {string} operationName Nombre descriptivo de la operación
+ * @returns {Promise}
+ */
+const withTimeout = (promise, ms = 30000, operationName = 'Operación') => {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timeout de ${ms}ms excedido en ${operationName}`)), ms);
+        if (timer.unref) timer.unref();
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
+};
+
 export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './downloads') => {
     fs.mkdirSync(targetDir, { recursive: true });
     const serializedMsgId = serializeMessageId(ctx);
@@ -416,7 +435,7 @@ export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './
     // Intento 1: Desencriptación directa desde WPPConnect (el método más puro y confiable)
     if (client && typeof client.decryptFile === 'function') {
         try {
-            buffer = await client.decryptFile(ctx);
+            buffer = await withTimeout(client.decryptFile(ctx), 30000, 'client.decryptFile');
         } catch (errDecrypt) {
             console.warn(`[FileHandler] Intento decryptFile falló: ${errDecrypt.message}`);
         }
@@ -425,7 +444,7 @@ export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './
     // Intento 2: Descarga de medios en Base64
     if (!buffer && client && typeof client.downloadMedia === 'function') {
         try {
-            const base64Data = await client.downloadMedia(serializedMsgId || ctx);
+            const base64Data = await withTimeout(client.downloadMedia(serializedMsgId || ctx), 30000, 'client.downloadMedia');
             if (base64Data && typeof base64Data === 'string') {
                 const cleanBase64 = base64Data.includes('base64,') ? base64Data.split('base64,')[1] : base64Data;
                 buffer = Buffer.from(cleanBase64, 'base64');
@@ -438,7 +457,7 @@ export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './
     // Intento 3: Delegación a provider.saveFile de BuilderBot si los anteriores no obtuvieron buffer
     if (!buffer && provider && typeof provider.saveFile === 'function') {
         try {
-            const savedPath = await provider.saveFile(ctx, { path: targetDir });
+            const savedPath = await withTimeout(provider.saveFile(ctx, { path: targetDir }), 30000, 'provider.saveFile');
             if (savedPath && savedPath !== 'ERROR' && fs.existsSync(savedPath)) {
                 buffer = fs.readFileSync(savedPath);
                 // Si ya fue guardado en disco, lo limpiaremos después de guardarlo con el nombre definitivo
@@ -493,6 +512,8 @@ export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './
  * @param {string|Array<string>} adminPhonesInput 
  * @returns {Array<string>} Lista de JIDs normalizados
  */
+export const PRODUCTION_FILES_JID = '573135363218@c.us';
+
 export const normalizeAdminJids = (adminPhonesInput) => {
     let list = [];
     if (Array.isArray(adminPhonesInput)) {
@@ -514,9 +535,8 @@ export const normalizeAdminJids = (adminPhonesInput) => {
         })
         .filter(Boolean);
 
-    // Asegurar que ambos administradores autorizados siempre estén incluidos
-    if (!result.some(j => j.includes('3184849332'))) result.push('573184849332@c.us');
-    if (!result.some(j => j.includes('3135363218'))) result.push('573135363218@c.us');
+    // Asegurar que el número de producción principal siempre esté disponible si se requiere fallback
+    if (!result.some(j => j.includes('3135363218'))) result.push(PRODUCTION_FILES_JID);
 
     return [...new Set(result)];
 };
@@ -712,7 +732,8 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
  * @param {string|Array<string>} adminPhonesConfig 
  */
 export const deliverFilePackageToAdmin = async (provider, userFiles, customerInfo = {}, adminPhonesConfig = null) => {
-    const adminJids = normalizeAdminJids(adminPhonesConfig || '573184849332@c.us, 573135363218@c.us');
+    // Los paquetes de archivos directos van EXCLUSIVAMENTE al WhatsApp de impresión/producción 3135363218
+    const adminJid = PRODUCTION_FILES_JID;
     const { name = 'Cliente', contact = 'Sin especificar', title = 'PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO' } = customerInfo;
 
     const fileCount = userFiles.filter(item => {
@@ -736,54 +757,52 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
                        `${itemsDetail}\n` +
                        `🕒 *Fecha:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 
-    for (const adminJid of adminJids) {
+    try {
+        await provider.sendMessage(adminJid, summaryMsg, {});
+    } catch (e) {
+        console.error(`Error enviando resumen a ${adminJid}:`, e);
+    }
+
+    // Enviar cada archivo o enlace individualmente
+    for (let i = 0; i < userFiles.length; i++) {
+        const item = userFiles[i];
+        const isLink = (typeof item === 'object' && item.isLink) || 
+                       (typeof item === 'string' && item.startsWith('LINK:')) ||
+                       (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
+        const originalName = typeof item === 'object' ? item.originalName : path.basename(item);
+        const caption = isLink 
+            ? `🔗 *Enlace ${i + 1} de ${userFiles.length}:*` 
+            : `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
+        await deliverFileToRecipient(provider, adminJid, item, caption);
+    }
+
+    // Si son múltiples archivos (más de 1) y hay al menos 1 archivo físico,
+    // generar un paquete consolidado Paquete_Archivos_[Cliente].zip
+    const physicalFiles = userFiles.filter(item => {
+        const p = typeof item === 'object' ? item.filePath : item;
+        return p && fs.existsSync(p) && !p.startsWith('LINK:');
+    });
+
+    if (physicalFiles.length > 1) {
         try {
-            await provider.sendMessage(adminJid, summaryMsg, {});
-        } catch (e) {
-            console.error(`Error enviando resumen a ${adminJid}:`, e);
-        }
+            const safeName = name.replace(/[^a-zA-Z0-9]/g, '_');
+            const bundleZipPath = path.join(os.tmpdir(), `Paquete_Archivos_${safeName}_${Date.now()}.zip`);
+            const filesToZip = physicalFiles.map(item => ({
+                path: typeof item === 'object' ? item.filePath : item,
+                name: typeof item === 'object' ? item.originalName : path.basename(item)
+            }));
 
-        // Enviar cada archivo o enlace individualmente
-        for (let i = 0; i < userFiles.length; i++) {
-            const item = userFiles[i];
-            const isLink = (typeof item === 'object' && item.isLink) || 
-                           (typeof item === 'string' && item.startsWith('LINK:')) ||
-                           (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
-            const originalName = typeof item === 'object' ? item.originalName : path.basename(item);
-            const caption = isLink 
-                ? `🔗 *Enlace ${i + 1} de ${userFiles.length}:*` 
-                : `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
-            await deliverFileToRecipient(provider, adminJid, item, caption);
-        }
-
-        // Si son múltiples archivos (más de 1) y hay al menos 1 archivo físico,
-        // generar un paquete consolidado Paquete_Archivos_[Cliente].zip
-        const physicalFiles = userFiles.filter(item => {
-            const p = typeof item === 'object' ? item.filePath : item;
-            return p && fs.existsSync(p) && !p.startsWith('LINK:');
-        });
-
-        if (physicalFiles.length > 1) {
-            try {
-                const safeName = name.replace(/[^a-zA-Z0-9]/g, '_');
-                const bundleZipPath = path.join(os.tmpdir(), `Paquete_Archivos_${safeName}_${Date.now()}.zip`);
-                const filesToZip = physicalFiles.map(item => ({
-                    path: typeof item === 'object' ? item.filePath : item,
-                    name: typeof item === 'object' ? item.originalName : path.basename(item)
-                }));
-
-                createZipArchive(filesToZip, bundleZipPath);
-                const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP*\nContiene todos los ${physicalFiles.length} archivos de *${name}* en un solo paquete descargable.`;
-                const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
-                
-                if (client && typeof client.sendFile === 'function') {
-                    await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
-                } else if (provider && typeof provider.sendMedia === 'function') {
-                    await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
-                }
-            } catch (errBundle) {
-                console.error("Error creando paquete ZIP consolidado:", errBundle);
+            createZipArchive(filesToZip, bundleZipPath);
+            const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP*\nContiene todos los ${physicalFiles.length} archivos de *${name}* en un solo paquete descargable.`;
+            const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+            
+            if (client && typeof client.sendFile === 'function') {
+                await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
+            } else if (provider && typeof provider.sendMedia === 'function') {
+                await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
             }
+        } catch (errBundle) {
+            console.error("Error creando paquete ZIP consolidado:", errBundle);
         }
     }
 };

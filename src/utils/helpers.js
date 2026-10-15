@@ -207,6 +207,7 @@ import {
     deliverFilePackageToAdmin,
     createZipArchive,
     normalizeAdminJids,
+    PRODUCTION_FILES_JID,
     CAD_EXTENSIONS,
     SPECIAL_EXTENSIONS
 } from './fileHandler.js';
@@ -220,6 +221,7 @@ export {
     deliverFilePackageToAdmin,
     createZipArchive,
     normalizeAdminJids,
+    PRODUCTION_FILES_JID,
     CAD_EXTENSIONS,
     SPECIAL_EXTENSIONS
 };

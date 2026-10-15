@@ -38,6 +38,7 @@
   "author": "",
   "license": "ISC",
   "overrides": {
-    "@wppconnect-team/wppconnect": "^2.3.3"
+    "@wppconnect-team/wppconnect": "^2.3.3",
+    "sharp": "0.33.5"
   }
 }

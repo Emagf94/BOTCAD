@@ -1,6 +1,6 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -43,7 +43,7 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
         }
 
         const data = state.getMyState() || {};
-        const adminPhones = normalizeAdminJids(BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us, 573135363218@c.us');
+        const adminOrderJid = BOT_SETTINGS.adminOrdersPhone?.split(',')[0]?.trim() || PRODUCTION_FILES_JID;
 
         let detallesArchivos = '';
         if (data.archivosConfig && data.archivosConfig.length > 0) {
@@ -60,18 +60,16 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             `💰 *Total Pagado:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        for (const ADMIN_NUMBER of adminPhones) {
-            try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) {}
+        try { await provider.sendMessage(adminOrderJid, msgAdmin, {}); } catch (err) {}
 
-            for (let i = 0; i < (data.archivos || []).length; i++) {
-                const pathItem = data.archivos[i];
-                const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-                const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-                await deliverFileToRecipient(provider, ADMIN_NUMBER, pathItem, caption);
-            }
-            
-            await deliverFileToRecipient(provider, ADMIN_NUMBER, comprobantePath, '💰 Comprobante de Pago');
+        for (let i = 0; i < (data.archivos || []).length; i++) {
+            const pathItem = data.archivos[i];
+            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
+            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
+            await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
         }
+        
+        await deliverFileToRecipient(provider, adminOrderJid, comprobantePath, '💰 Comprobante de Pago');
 
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pedidoExitoso || '✅ ¡Tu pedido ha sido recibido con éxito! 🎉\nUn asesor revisará tus archivos y tu pago, y te contactará por este medio para confirmarlo.\n¡Gracias por preferir CAD Impresiones!');
@@ -106,8 +104,7 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         const data = state.getMyState();
-        const adminPhonesStr = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us';
-        const adminPhones = adminPhonesStr.split(',').map(s => s.trim());
+        const adminOrderJid = BOT_SETTINGS.adminOrdersPhone?.split(',')[0]?.trim() || PRODUCTION_FILES_JID;
         const rawNumber = ctx.from.split('@')[0];
         
         let detallesArchivos = '';
@@ -125,14 +122,12 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
             `💰 *Total a Cobrar:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        for (const ADMIN_NUMBER of adminPhones) {
-            try { await provider.sendMessage(ADMIN_NUMBER, msgAdmin, {}); } catch (err) { }
-            for (let i = 0; i < (data.archivos || []).length; i++) {
-                const pathItem = data.archivos[i];
-                const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-                const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-                await deliverFileToRecipient(provider, ADMIN_NUMBER, pathItem, caption);
-            }
+        try { await provider.sendMessage(adminOrderJid, msgAdmin, {}); } catch (err) { }
+        for (let i = 0; i < (data.archivos || []).length; i++) {
+            const pathItem = data.archivos[i];
+            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
+            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
+            await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
         }
 
         await new Promise(r => setTimeout(r, 1500));

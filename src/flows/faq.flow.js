@@ -161,7 +161,7 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
             const name = state.getMyState()?.userName || userDb?.name || 'Cliente';
             const contact = userDb?.contactUser || phoneId;
             
-            const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573184849332@c.us, 573135363218@c.us';
+            const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573135363218@c.us';
 
             // Entrega multietapa a todos los administradores (envío directo + enlaces + .ZIP consolidado + fallback)
             await deliverFilePackageToAdmin(provider, userFiles, {

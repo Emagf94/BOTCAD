@@ -94,7 +94,8 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                 ctx.message?.documentMessage;
 
             if (esArchivo) {
-                downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+                try {
+                    const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
                     const filePath = fileInfo.filePath;
                     if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                     globalFilesCache.get(ctx.from).push(filePath);
@@ -103,7 +104,7 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                     const currentFiles = state.getMyState()?.archivos || [];
                     await state.update({ archivos: [...currentFiles, filePath] });
                     console.log(`[CAD Bot] Archivo de menú principal guardado: ${fileInfo.originalName}`);
-                }).catch(async (e) => {
+                } catch (e) {
                     console.error("Error guardando archivo en flowMainMenu:", e);
                     const filePath = getFileReference(ctx, null);
                     if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
@@ -112,7 +113,7 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                     globalFilesCache.get(ctx.from + '_directo').push(filePath);
                     const currentFiles = state.getMyState()?.archivos || [];
                     await state.update({ archivos: [...currentFiles, filePath] });
-                });
+                }
                 return fallBack('📎 *Archivo recibido y guardado.* Por favor, selecciona una opción del *1 al 10* para saber cómo procesarlo (ej: *1* Carteleras, *2* Planos, *3* Documentos, *7* Envío Directo al Asesor):');
             }
 
@@ -187,7 +188,8 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
             ctx.message?.documentMessage;
 
         if (esArchivo) {
-            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+            try {
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
                 const filePath = fileInfo.filePath;
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
@@ -195,7 +197,17 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
                 globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
                 const currentFiles = state.getMyState()?.archivos || [];
                 await state.update({ archivos: [...currentFiles, filePath] });
-            }).catch(e => console.error(e));
+                console.log(`[CAD Bot] Archivo en flowContactUserCapture guardado: ${fileInfo.originalName}`);
+            } catch (e) {
+                console.error("Error guardando archivo en flowContactUserCapture:", e);
+                const filePath = getFileReference(ctx, null);
+                if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                globalFilesCache.get(ctx.from).push(filePath);
+                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                globalFilesCache.get(ctx.from + '_directo').push(filePath);
+                const currentFiles = state.getMyState()?.archivos || [];
+                await state.update({ archivos: [...currentFiles, filePath] });
+            }
             return fallBack('📎 ¡Archivo recibido! Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:');
         }
 
@@ -247,7 +259,8 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
             ctx.message?.documentMessage;
 
         if (esArchivo) {
-            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+            try {
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
                 const filePath = fileInfo.filePath;
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
@@ -255,7 +268,17 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
                 globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
                 const currentFiles = state.getMyState()?.archivos || [];
                 await state.update({ archivos: [...currentFiles, filePath] });
-            }).catch(e => console.error(e));
+                console.log(`[CAD Bot] Archivo en flowNameCapture guardado: ${fileInfo.originalName}`);
+            } catch (e) {
+                console.error("Error guardando archivo en flowNameCapture:", e);
+                const filePath = getFileReference(ctx, null);
+                if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+                globalFilesCache.get(ctx.from).push(filePath);
+                if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+                globalFilesCache.get(ctx.from + '_directo').push(filePath);
+                const currentFiles = state.getMyState()?.archivos || [];
+                await state.update({ archivos: [...currentFiles, filePath] });
+            }
             return fallBack('📎 ¡Archivo recibido! Para registrarte y atenderte, por favor indícanos primero tu *nombre*:');
         }
 
@@ -287,13 +310,7 @@ export const flowWelcomeRegistered = addKeyword(EVENTS.ACTION)
         return gotoFlow(flowMainMenu);
     });
 
-export const flowWelcome = addKeyword([
-    EVENTS.WELCOME,
-    EVENTS.MEDIA,
-    EVENTS.DOCUMENT,
-    EVENTS.VOICE_NOTE,
-    EVENTS.LOCATION
-])
+export const flowWelcome = addKeyword(EVENTS.WELCOME)
     .addAction(async (ctx, { gotoFlow, state, flowDynamic, provider }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
@@ -319,7 +336,8 @@ export const flowWelcome = addKeyword([
             ctx.message?.documentMessage;
 
         if (esArchivoInicial) {
-            downloadAndSaveIncomingFile(ctx, provider, './downloads').then(async (fileInfo) => {
+            try {
+                const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
                 const filePath = fileInfo.filePath;
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
@@ -328,7 +346,8 @@ export const flowWelcome = addKeyword([
                 const currentFiles = state.getMyState()?.archivos || [];
                 await state.update({ archivos: [...currentFiles, filePath] });
                 console.log(`[CAD Bot] Archivo de bienvenida guardado: ${fileInfo.originalName}`);
-            }).catch(async (e) => {
+            } catch (e) {
+                console.error("Error guardando archivo en flowWelcome:", e);
                 const filePath = getFileReference(ctx, null);
                 if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
                 globalFilesCache.get(ctx.from).push(filePath);
@@ -336,7 +355,7 @@ export const flowWelcome = addKeyword([
                 globalFilesCache.get(ctx.from + '_directo').push(filePath);
                 const currentFiles = state.getMyState()?.archivos || [];
                 await state.update({ archivos: [...currentFiles, filePath] });
-            });
+            }
         }
 
         // Chequear si el mensaje inicial coincide con algún nodo personalizado

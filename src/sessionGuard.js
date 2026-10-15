@@ -343,7 +343,27 @@ export function initSessionGuard(provider) {
 
     // Capturar errores no manejados para hacer backup antes de morir
     process.on('uncaughtException', (err) => {
-        console.error(`💥 [SessionGuard] Error no capturado: ${err.message}`);
+        const errorMsg = err?.message || String(err || '');
+        const isRecoverable =
+            errorMsg.includes('Vendor should not return empty') ||
+            errorMsg.includes('EBUSY') ||
+            errorMsg.includes('ECONNRESET') ||
+            errorMsg.includes('ETIMEDOUT') ||
+            errorMsg.includes('EHOSTUNREACH') ||
+            errorMsg.includes('ENOTFOUND') ||
+            errorMsg.includes('Execution context was destroyed') ||
+            errorMsg.includes('Target closed') ||
+            errorMsg.includes('Protocol error') ||
+            errorMsg.includes('Evaluation failed') ||
+            errorMsg.includes('colourspace') ||
+            errorMsg.includes('parameter space not set');
+
+        if (isRecoverable) {
+            console.warn(`⚠️ [SessionGuard] Error no capturado pero recuperable ignorado para mantener el bot activo: ${errorMsg}`);
+            return;
+        }
+
+        console.error(`💥 [SessionGuard] Error fatal no capturado: ${err.message}`);
         console.error(err.stack);
         try { backupSession(); } catch { /* ignorar */ }
         // Salir para que el watchdog (.bat) reinicie el proceso limpiamente
@@ -351,8 +371,31 @@ export function initSessionGuard(provider) {
     });
 
     process.on('unhandledRejection', (reason) => {
+        const errorMsg = reason?.message || String(reason || '');
+        const isIgnorable =
+            errorMsg.includes('colourspace') ||
+            errorMsg.includes('parameter space not set') ||
+            errorMsg.includes('Vendor should not return empty') ||
+            errorMsg.includes('EBUSY') ||
+            errorMsg.includes('ECONNRESET') ||
+            errorMsg.includes('ETIMEDOUT') ||
+            errorMsg.includes('EHOSTUNREACH') ||
+            errorMsg.includes('ENOTFOUND') ||
+            errorMsg.includes('Execution context was destroyed') ||
+            errorMsg.includes('Target closed') ||
+            errorMsg.includes('Protocol error') ||
+            errorMsg.includes('Evaluation failed') ||
+            (reason?.stack && reason.stack.includes('cleanImage'));
+
+        if (isIgnorable) {
+            console.warn(`⚠️ [SessionGuard] Advertencia no crítica / rechazo de promesa ignorado para estabilidad: ${errorMsg}`);
+            return;
+        }
+
         console.error(`💥 [SessionGuard] Promesa rechazada sin manejar:`, reason);
-        backupSession();
+        // NOTA: No forzamos salida con process.exit(1) por rechazos de promesas.
+        // Hacemos backup preventivo para proteger el estado de sesión actual.
+        try { backupSession(); } catch { /* ignorar */ }
     });
 
     console.log(`✅ [SessionGuard] Todas las capas de protección activadas:`);
