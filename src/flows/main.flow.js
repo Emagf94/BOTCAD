@@ -11,7 +11,8 @@ import {
     sanitizeFilePath,
     getFileReference,
     downloadAndSaveIncomingFile,
-    extractCloudLinks
+    extractCloudLinks,
+    safeSendLogo
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
 import { flowEnvioDirectoArchivos, flowPagosFAQ, flowFAQ } from './faq.flow.js';
@@ -382,24 +383,12 @@ export const flowWelcome = addKeyword(EVENTS.WELCOME)
             await state.update({ userName: user.name, contactUser: user.contactUser || '' });
             await new Promise(r => setTimeout(r, 1500));
             const msg = renderMessage('bienvenidaRegistrado', { name: user.name });
-            try {
-                await flowDynamic([{ media: './assets/logo.png' }]);
-                await new Promise(r => setTimeout(r, 1000));
-                await flowDynamic([msg]);
-            } catch (e) {
-                await flowDynamic([msg]);
-            }
+            await safeSendLogo(provider, ctx.from, msg);
             return gotoFlow(flowMainMenu);
         } else {
             await new Promise(r => setTimeout(r, 1500));
             const msg = BOT_MESSAGES.bienvenidaNuevo || '¡Hola!\nSoy *Cadi*, tu asistente virtual 🤖.\n¡Bienvenido a *CAD Impresiones* 🖨️!';
-            try {
-                await flowDynamic([{ media: './assets/logo.png' }]);
-                await new Promise(r => setTimeout(r, 1000));
-                await flowDynamic([msg]);
-            } catch (e) {
-                await flowDynamic([msg]);
-            }
+            await safeSendLogo(provider, ctx.from, msg);
             return gotoFlow(flowNameCapture);
         }
     });

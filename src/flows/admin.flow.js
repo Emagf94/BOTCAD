@@ -6,6 +6,8 @@ import {
     isAdmin,
     pendingSupportQueue,
     activeBridgeChats,
+    findActiveBridge,
+    removeActiveBridge,
     sanitizeFilePath,
     getFileReference,
     downloadAndSaveIncomingFile,
@@ -66,20 +68,10 @@ export const notifyAdvisorsClientAttended = async (provider, { advisorPhone, tar
  */
 export const endActiveSupportChat = async (provider, adminFrom) => {
     try {
-        let clientPhone = activeBridgeChats.get(adminFrom);
-        if (!clientPhone) {
-            for (const [key, val] of activeBridgeChats.entries()) {
-                if (key.includes(adminFrom) || adminFrom.includes(key)) {
-                    clientPhone = val;
-                    activeBridgeChats.delete(key);
-                    break;
-                }
-            }
-        }
+        const clientPhone = findActiveBridge(adminFrom);
 
         if (clientPhone) {
-            activeBridgeChats.delete(clientPhone);
-            activeBridgeChats.delete(adminFrom);
+            removeActiveBridge(adminFrom);
 
             try {
                 await provider.sendMessage(clientPhone, '👨‍💻 *El asesor ha finalizado el chat.* Volviendo al menú principal...', {});
@@ -107,7 +99,7 @@ export const endActiveSupportChat = async (provider, adminFrom) => {
 // ==========================================
 
 export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
-    .addAction({ capture: true, idle: 3600000 }, async (ctx, { fallBack, endFlow, provider }) => {
+    .addAction({ capture: true, idle: BOT_SETTINGS.advisorIdleTimeoutMs || 1800000 }, async (ctx, { fallBack, endFlow, provider }) => {
         if (!isAdmin(ctx)) return;
 
         if (ctx?.idleFallBack) {
@@ -115,7 +107,7 @@ export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
             return endFlow('⏳ Sesión de soporte terminada por inactividad.');
         }
 
-        const clientPhone = activeBridgeChats.get(ctx.from);
+        const clientPhone = findActiveBridge(ctx.from);
         if (!clientPhone) return endFlow('❌ El chat ha expirado o el cliente se fue.');
 
         const bodyTrim = (ctx.body || '').trim();
@@ -237,13 +229,18 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
         }
         
         // Si el asesor ya tenía otro chat activo, cerrarlo previamente
-        const previousChat = activeBridgeChats.get(ctx.from);
+        const previousChat = findActiveBridge(ctx.from);
         if (previousChat && previousChat !== targetId) {
             await endActiveSupportChat(provider, ctx.from);
         }
 
         activeBridgeChats.set(ctx.from, targetId);
         activeBridgeChats.set(targetId, ctx.from);
+
+        const cleanAdmin = String(ctx.from).split('@')[0].replace(/\D/g, '');
+        const cleanClient = String(targetId).split('@')[0].replace(/\D/g, '');
+        if (cleanAdmin) activeBridgeChats.set(cleanAdmin, targetId);
+        if (cleanClient) activeBridgeChats.set(cleanClient, ctx.from);
 
         const rawTargetPhone = targetId.split('@')[0];
         const queueIndex = pendingSupportQueue.indexOf(rawTargetPhone);
@@ -300,10 +297,9 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
         return gotoFlow(flowAdminBridgeLoop);
     }
     if (ctx?.idleFallBack) {
-        const adminPhone = activeBridgeChats.get(ctx.from);
+        const adminPhone = findActiveBridge(ctx.from);
         if (adminPhone) {
-            activeBridgeChats.delete(adminPhone);
-            activeBridgeChats.delete(ctx.from);
+            removeActiveBridge(ctx.from);
             await provider.sendMessage(adminPhone, `❌ La sesión con ${ctx.from} expiró por inactividad.`, {});
         }
         return gotoFlow(flowInactividad);
@@ -311,18 +307,22 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
 
     const txt = (ctx.body || '').trim().toLowerCase();
     if (txt === '0' || txt === 'salir') {
-        const adminPhone = activeBridgeChats.get(ctx.from);
+        const adminPhone = findActiveBridge(ctx.from);
         if (adminPhone) {
-            activeBridgeChats.delete(adminPhone);
-            activeBridgeChats.delete(ctx.from);
+            removeActiveBridge(ctx.from);
             await provider.sendMessage(adminPhone, `❌ El cliente ha finalizado el chat de soporte.`, {});
         }
-        const qIdx = pendingSupportQueue.indexOf(ctx.from);
-        if (qIdx > -1) pendingSupportQueue.splice(qIdx, 1);
+        const cleanFrom = String(ctx.from).split('@')[0].replace(/\D/g, '');
+        for (let i = pendingSupportQueue.length - 1; i >= 0; i--) {
+            const itemClean = String(pendingSupportQueue[i]).split('@')[0].replace(/\D/g, '');
+            if (itemClean === cleanFrom || pendingSupportQueue[i] === ctx.from) {
+                pendingSupportQueue.splice(i, 1);
+            }
+        }
         return gotoFlow(flowCancelar);
     }
 
-    const adminPhone = activeBridgeChats.get(ctx.from);
+    const adminPhone = findActiveBridge(ctx.from);
     if (!adminPhone) {
         if (!isWorkingHour()) {
             const txt = (ctx.body || '').trim().toLowerCase();
@@ -330,24 +330,23 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
             return fallBack();
         }
 
-        if (pendingSupportQueue.includes(ctx.from)) {
-            await provider.sendMessage(ctx.from, '⏳ Aún estamos conectando con un asesor, por favor espera un momento...', {});
+        const cleanFrom = String(ctx.from).split('@')[0].replace(/\D/g, '');
+        const isPending = pendingSupportQueue.some(item => {
+            const itemClean = String(item).split('@')[0].replace(/\D/g, '');
+            return itemClean && cleanFrom && (itemClean === cleanFrom || item.includes(cleanFrom) || cleanFrom.includes(itemClean));
+        });
+
+        if (isPending) {
+            await provider.sendMessage(ctx.from, '⏳ Aún estamos conectando con un asesor, por favor espera un momento...\n\n(Para salir y volver al menú principal escribe *0* o *salir*)', {});
             return fallBack();
         } else {
-            // El asesor finalizó el chat (!fin)
-            try {
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
-                if (client && client.sendImageAsSticker) {
-                    await client.sendImageAsSticker(ctx.from, './assets/chat_f.webp');
-                } else {
-                    await provider.sendMedia(ctx.from, './assets/chat_f.webp', '');
-                }
-            } catch(e) {}
+            // El chat no está activo ni pendiente
+            await provider.sendMessage(ctx.from, '👨‍💻 La sesión con el asesor no está activa actualmente.\nEscribe *10* para solicitar un asesor o *0* para volver al menú principal.', {});
             return gotoFlow(flowMainMenu);
         }
     }
 
-    const esMedia = (ctx.body && (ctx.body.includes('_media_') || ctx.body.includes('_document_') || ctx.body.includes('_image_') || ctx.body.includes('_voice_note_') || ctx.body.includes('_video_'))) || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage || ctx.message?.videoMessage || ctx.message?.audioMessage;
+    const esMedia = (ctx.body && (ctx.body.includes('_media_') || ctx.body.includes('_document_') || ctx.body.includes('_image_') || ctx.body.includes('_voice_note_') || ctx.body.includes('_video_') || ctx.body.includes('_event_'))) || ctx.hasMedia || ctx.mimetype || ctx.message?.imageMessage || ctx.message?.documentMessage || ctx.message?.videoMessage || ctx.message?.audioMessage;
     
     let caption = ctx.body || '';
     if (caption.includes('_event_') || caption.includes('_media_') || caption.includes('_document_') || caption.includes('_image_') || caption.includes('_voice_note_') || caption.includes('_video_')) {
@@ -369,7 +368,7 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
 };
 
 export const flowAdminInitiatedClientBridge = addKeyword(['iniciarchatadmin123xyz'])
-    .addAction({ capture: true, idle: 600000 }, clientBridgeCapture);
+    .addAction({ capture: true, idle: BOT_SETTINGS.advisorIdleTimeoutMs || 1800000 }, clientBridgeCapture);
 
 export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
     .addAction(async (ctx, { provider, state, flowDynamic }) => {
@@ -424,4 +423,4 @@ export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
         
         await flowDynamic(clientMsg);
     })
-    .addAction({ capture: true, idle: 600000 }, clientBridgeCapture);
+    .addAction({ capture: true, idle: BOT_SETTINGS.advisorIdleTimeoutMs || 1800000 }, clientBridgeCapture);

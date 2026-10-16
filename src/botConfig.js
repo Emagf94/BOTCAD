@@ -123,10 +123,11 @@ export const BOT_MEDIA = {
 // ==========================================
 export const BOT_SETTINGS = {
     adminOrdersPhone: '573135363218@c.us',
-    adminSupportPhone: '573184849332@c.us, 573135363218@c.us',
-    adminEscapes: ['573184849332', '235780886794250', '573135363218', '3135363218', '13770403381354'],
+    adminSupportPhone: '573184849332@c.us, 573135363218@c.us, 573136303477@c.us',
+    adminEscapes: ['573184849332', '235780886794250', '573135363218', '3135363218', '13770403381354', '573136303477', '3136303477'],
     botName: 'Cadi',
-    inactivityMinutes: 10
+    inactivityMinutes: 10,
+    advisorIdleTimeoutMs: 1800000
 };
 
 // ==========================================

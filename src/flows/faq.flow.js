@@ -8,7 +8,8 @@ import {
     getFileReference,
     downloadAndSaveIncomingFile,
     deliverFilePackageToAdmin,
-    extractCloudLinks
+    extractCloudLinks,
+    safeSendPaymentMedia
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
@@ -30,7 +31,15 @@ export const flowHorarios = addKeyword(['horario', 'abren', 'cierran', 'hora'])
     });
 
 export const flowPagosFAQ = addKeyword(EVENTS.ACTION)
-    .addAnswer('💳 *Métodos de Pago*\nAceptamos Transferencias y Efectivo.\n\n⚠️ No aceptamos pagos con tarjeta de débito ni crédito, gracias.\n\nEscribe *0* para volver al menú principal.', { media: './assets/qr_pagos.png', capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
+    .addAction(async (ctx, { provider }) => {
+        await new Promise(r => setTimeout(r, 1000));
+        await safeSendPaymentMedia(
+            provider,
+            ctx.from,
+            '💳 *Métodos de Pago*\nAceptamos Transferencias y Efectivo.\n\n⚠️ No aceptamos pagos con tarjeta de débito ni crédito, gracias.'
+        );
+    })
+    .addAnswer('Escribe *0* para volver al menú principal.', { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
@@ -83,10 +92,13 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         const esMedia = texto.includes('_media_') || 
                         texto.includes('_document_') || 
                         texto.includes('_image_') || 
-                        ctx.hasMedia || 
-                        ctx.mimetype ||
-                        ctx.message?.imageMessage || 
-                        ctx.message?.documentMessage;
+                        texto.includes('_voice_note_') ||
+                        Boolean(ctx.hasMedia) || 
+                        Boolean(ctx.mimetype) ||
+                        Boolean(ctx.message?.imageMessage) || 
+                        Boolean(ctx.message?.documentMessage) ||
+                        Boolean(ctx.message?.videoMessage) ||
+                        Boolean(ctx.message?.audioMessage);
 
         // Detectar links en el cuerpo del mensaje y en la leyenda (caption)
         const linksEncontrados = [
@@ -121,7 +133,7 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
                     const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
                     userFiles.push(fileInfo);
 
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise(r => setTimeout(r, 400));
                     const nombreMostrar = fileInfo.originalName || 'Archivo';
                     const cadTag = fileInfo.isCad ? ' 📐 *(AutoCAD CAD detectado)*' : '';
                     await provider.sendMessage(ctx.from, `✅ Archivo recibido: *${nombreMostrar}*${cadTag} (${userFiles.length} en total).\n\nPuedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
@@ -135,11 +147,11 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
                         isCad: false
                     });
 
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise(r => setTimeout(r, 400));
                     await provider.sendMessage(ctx.from, `✅ Archivo recibido en modo seguro (${userFiles.length} en total). Puedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
                 }
             } else if (uniqueLinks.length > 0) {
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 400));
                 const linksList = uniqueLinks.map(l => `  🔗 ${l}`).join('\n');
                 await provider.sendMessage(ctx.from, `✅ *Enlace(s) recibido(s)* (${userFiles.length} en total):\n${linksList}\n\nPuedes enviar más archivos o enlaces si lo deseas, o elige una opción:\n\n*1.* ✅ Ya envié todos (Enviar al administrador)\n*0.* ⬅️ Cancelar y volver al menú principal`, {});
             }

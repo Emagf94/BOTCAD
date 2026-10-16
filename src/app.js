@@ -85,6 +85,45 @@ const main = async () => {
         provider: adapterProvider,
         database: adapterDB
     });
+
+    // =====================================================================
+    // COLA SECUENCIAL POR USUARIO (Resuelve archivos múltiples y reenvíos concurrentes)
+    // =====================================================================
+    // WhatsApp entrega múltiples archivos reenviados en paralelo (<200ms).
+    // BuilderBot no encola mensajes por usuario por defecto, lo que causa que
+    // el segundo y tercer archivo sobrescriban el estado antes de que el primero termine
+    // de descargarse. Esta cola garantiza que cada mensaje de un mismo usuario se procese
+    // de forma estrictamente secuencial, conservando el paso de captura intacto.
+    const originalHandleMsg = botInstance.handleMsg.bind(botInstance);
+    const userMessageQueues = new Map();
+
+    botInstance.handleMsg = async (messageCtxInComing) => {
+        const from = messageCtxInComing?.from;
+        if (!from) return originalHandleMsg(messageCtxInComing);
+
+        const previousPromise = userMessageQueues.get(from) || Promise.resolve();
+        const currentPromise = previousPromise
+            .catch(() => {})
+            .then(async () => {
+                return await Promise.race([
+                    originalHandleMsg(messageCtxInComing),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error(`Timeout de procesamiento para mensaje de ${from}`)), 45000)
+                    )
+                ]);
+            })
+            .catch((err) => {
+                console.error(`⚠️ [UserQueue] Error procesando mensaje de ${from}:`, err.message);
+            })
+            .finally(() => {
+                if (userMessageQueues.get(from) === currentPromise) {
+                    userMessageQueues.delete(from);
+                }
+            });
+
+        userMessageQueues.set(from, currentPromise);
+        return currentPromise;
+    };
     
     botInstance.httpServer(+PORT);
     console.log(`🚀 [CAD Bot] Servidor y bot iniciados correctamente en el puerto ${PORT}`);

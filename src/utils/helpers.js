@@ -24,6 +24,214 @@ export const activeBridgeChats = new Map();
  */
 export const pendingSupportQueue = [];
 
+/**
+ * Busca de forma flexible si un remitente (asesor o cliente) tiene un chat activo de soporte.
+ * Compara por coincidencia exacta, ID normalizado de dígitos o inclusión de cadenas, evitando
+ * desconexiones por discordancias entre @s.whatsapp.net, @c.us o LIDs.
+ * @param {string} fromOrJid
+ * @returns {string|null} JID del interlocutor o null
+ */
+export const findActiveBridge = (fromOrJid) => {
+    if (!fromOrJid) return null;
+    const raw = String(fromOrJid);
+
+    // 1. Coincidencia directa
+    if (activeBridgeChats.has(raw)) {
+        return activeBridgeChats.get(raw);
+    }
+
+    // 2. Coincidencia por dígitos limpios
+    const cleanFrom = raw.split('@')[0].replace(/\D/g, '');
+    if (cleanFrom && activeBridgeChats.has(cleanFrom)) {
+        return activeBridgeChats.get(cleanFrom);
+    }
+
+    // 3. Búsqueda profunda en las claves del mapa
+    for (const [key, val] of activeBridgeChats.entries()) {
+        const cleanKey = String(key).split('@')[0].replace(/\D/g, '');
+        if (cleanFrom && cleanKey && (cleanKey === cleanFrom || key.includes(cleanFrom) || raw.includes(cleanKey))) {
+            return val;
+        }
+    }
+
+    return null;
+};
+
+/**
+ * Elimina la asociación bidireccional de un chat activo de soporte.
+ * @param {string} fromOrJid
+ */
+export const removeActiveBridge = (fromOrJid) => {
+    if (!fromOrJid) return;
+    const partner = findActiveBridge(fromOrJid);
+    const raw = String(fromOrJid);
+    const cleanFrom = raw.split('@')[0].replace(/\D/g, '');
+
+    activeBridgeChats.delete(raw);
+    if (cleanFrom) activeBridgeChats.delete(cleanFrom);
+
+    if (partner) {
+        const partnerRaw = String(partner);
+        const partnerClean = partnerRaw.split('@')[0].replace(/\D/g, '');
+        activeBridgeChats.delete(partnerRaw);
+        if (partnerClean) activeBridgeChats.delete(partnerClean);
+    }
+
+    for (const [key, val] of Array.from(activeBridgeChats.entries())) {
+        const cleanKey = String(key).split('@')[0].replace(/\D/g, '');
+        if ((cleanFrom && cleanKey === cleanFrom) || (partner && String(val).includes(cleanFrom))) {
+            activeBridgeChats.delete(key);
+        }
+    }
+};
+
+/**
+ * Envía la imagen de métodos de pago de forma segura sin riesgo de congelar el bot.
+ * Utiliza ruta absoluta con path.resolve y fallback controlado a mensaje de texto si la multimedia falla.
+ * @param {object} provider Instancia del proveedor BuilderBot
+ * @param {string} jid Destinatario
+ * @param {string} caption Mensaje o pie de foto
+ * @returns {Promise<boolean>} true si se envió la imagen, false si se usó fallback de texto
+ */
+export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
+    try {
+        const qrPath = path.resolve(process.cwd(), './assets/qr_pagos.png');
+        if (!fs.existsSync(qrPath)) {
+            console.warn(`⚠️ [safeSendPaymentMedia] Archivo QR no encontrado en: ${qrPath}`);
+            if (caption) await provider.sendMessage(jid, caption, {});
+            return false;
+        }
+
+        const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+        let sent = false;
+
+        // Estrategia 1: sendFile de WPPConnect con waitForAck: false
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(jid, qrPath, {
+                    filename: 'qr_pagos.png',
+                    caption: caption || '',
+                    waitForAck: false
+                });
+                sent = true;
+                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (options) a ${jid}`);
+            } catch (e1) {
+                console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (options) falló: ${e1.message}`);
+                try {
+                    await client.sendFile(jid, qrPath, 'qr_pagos.png', caption || '');
+                    sent = true;
+                    console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
+                } catch (e1b) {
+                    console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (posicional) falló: ${e1b.message}`);
+                }
+            }
+        }
+
+        // Estrategia 2: sendImage de WPPConnect
+        if (!sent && client && typeof client.sendImage === 'function') {
+            try {
+                await client.sendImage(jid, qrPath, 'qr_pagos.png', caption);
+                sent = true;
+                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendImage a ${jid}`);
+            } catch (e2) {
+                console.warn(`⚠️ [safeSendPaymentMedia] client.sendImage falló: ${e2.message}`);
+            }
+        }
+
+        // Estrategia 3: provider.sendMedia
+        if (!sent && provider && typeof provider.sendMedia === 'function') {
+            try {
+                await provider.sendMedia(jid, qrPath, caption);
+                sent = true;
+                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía provider.sendMedia a ${jid}`);
+            } catch (e3) {
+                console.warn(`⚠️ [safeSendPaymentMedia] provider.sendMedia falló: ${e3.message}`);
+            }
+        }
+
+        // Fallback si no se pudo enviar multimedia
+        if (!sent) {
+            console.warn(`⚠️ [safeSendPaymentMedia] No se pudo enviar imagen QR, enviando texto alternativo a ${jid}`);
+            if (caption) await provider.sendMessage(jid, caption, {});
+        }
+        return sent;
+    } catch (err) {
+        console.error(`❌ [safeSendPaymentMedia] Excepción inesperada:`, err);
+        if (caption) {
+            try { await provider.sendMessage(jid, caption, {}); } catch (e) {}
+        }
+        return false;
+    }
+};
+
+/**
+ * Envía la imagen de logo de saludo de forma segura sin riesgo de congelar el bot ni lanzar excepciones en flowDynamic.
+ * Utiliza ruta absoluta con path.resolve y fallback controlado a mensaje de texto si la multimedia falla.
+ * @param {object} provider Instancia del proveedor BuilderBot
+ * @param {string} jid Destinatario
+ * @param {string} caption Mensaje o pie de foto
+ * @returns {Promise<boolean>} true si se envió la imagen, false si se usó fallback de texto
+ */
+export const safeSendLogo = async (provider, jid, caption = '') => {
+    try {
+        const logoPath = path.resolve(process.cwd(), './assets/logo.png');
+        if (!fs.existsSync(logoPath)) {
+            console.warn(`⚠️ [safeSendLogo] Archivo logo no encontrado en: ${logoPath}`);
+            if (caption) await provider.sendMessage(jid, caption, {});
+            return false;
+        }
+
+        const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+        let sent = false;
+
+        // Estrategia 1: sendFile de WPPConnect con waitForAck: false
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(jid, logoPath, {
+                    filename: 'logo.png',
+                    caption: caption || '',
+                    waitForAck: false
+                });
+                sent = true;
+                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (options) a ${jid}`);
+            } catch (e1) {
+                console.warn(`⚠️ [safeSendLogo] client.sendFile (options) falló: ${e1.message}`);
+                try {
+                    await client.sendFile(jid, logoPath, 'logo.png', caption || '');
+                    sent = true;
+                    console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
+                } catch (e1b) {
+                    console.warn(`⚠️ [safeSendLogo] client.sendFile (posicional) falló: ${e1b.message}`);
+                }
+            }
+        }
+
+        // Estrategia 2: provider.sendMedia como respaldo
+        if (!sent && provider && typeof provider.sendMedia === 'function') {
+            try {
+                await provider.sendMedia(jid, logoPath, caption || '');
+                sent = true;
+                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía provider.sendMedia a ${jid}`);
+            } catch (e2) {
+                console.warn(`⚠️ [safeSendLogo] provider.sendMedia falló: ${e2.message}`);
+            }
+        }
+
+        // Fallback si no se pudo enviar multimedia
+        if (!sent) {
+            console.warn(`⚠️ [safeSendLogo] No se pudo enviar imagen de logo, enviando texto alternativo a ${jid}`);
+            if (caption) await provider.sendMessage(jid, caption, {});
+        }
+        return sent;
+    } catch (err) {
+        console.error(`❌ [safeSendLogo] Excepción inesperada:`, err);
+        if (caption) {
+            try { await provider.sendMessage(jid, caption, {}); } catch (e) {}
+        }
+        return false;
+    }
+};
+
 // ==========================================
 // FUNCIONES DE VALIDACIÓN Y HELPERS
 // ==========================================
@@ -58,15 +266,26 @@ export const isAdmin = (fromOrCtx) => {
         if (typeof escapes === 'string') escapes = escapes.split(',').map(s => s.trim());
         else escapes = [String(escapes)];
     }
+
+    // Extraer también de forma dinámica todos los números de asesores y órdenes configurados (del Dashboard o botConfig)
+    const dynamicPhones = [
+        ...(typeof BOT_SETTINGS.adminSupportPhone === 'string' ? BOT_SETTINGS.adminSupportPhone.split(',') : []),
+        ...(typeof BOT_SETTINGS.adminOrdersPhone === 'string' ? BOT_SETTINGS.adminOrdersPhone.split(',') : [])
+    ]
+        .map(s => s.trim().replace('@c.us', '').replace('@lid', '').replace(/\D/g, ''))
+        .filter(Boolean);
     
     // Lista inmutable de administradores autorizados
     const finalAdmins = [
         ...escapes,
+        ...dynamicPhones,
         '573184849332',
         '235780886794250',
         '573135363218',
         '3135363218',
-        '13770403381354'
+        '13770403381354',
+        '573136303477',
+        '3136303477'
     ];
     
     return candidates.some(cand => finalAdmins.some(admin => String(cand).includes(admin)));

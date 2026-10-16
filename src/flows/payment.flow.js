@@ -1,6 +1,7 @@
+import path from 'path';
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -20,7 +21,15 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
         const texto = (ctx.body || '').trim().toLowerCase();
         if (['0', 'menu', 'menú', 'volver'].includes(texto)) return gotoFlow(flowCancelar);
 
-        const esMedia = texto.includes('_media_') || texto.includes('_document_') || texto.includes('_image_') || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage;
+        const esMedia = texto.includes('_media_') || 
+                        texto.includes('_document_') || 
+                        texto.includes('_image_') || 
+                        texto.includes('_event_') ||
+                        ctx.hasMedia || 
+                        ctx.mimetype ||
+                        ctx.message?.imageMessage || 
+                        ctx.message?.documentMessage ||
+                        ctx.message?.videoMessage;
 
         if (!esMedia) {
             await new Promise(r => setTimeout(r, 1500));
@@ -43,7 +52,8 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
         }
 
         const data = state.getMyState() || {};
-        const adminOrderJid = BOT_SETTINGS.adminOrdersPhone?.split(',')[0]?.trim() || PRODUCTION_FILES_JID;
+        const normalizedJids = normalizeAdminJids(BOT_SETTINGS.adminOrdersPhone);
+        const adminOrderJid = normalizedJids[0] || PRODUCTION_FILES_JID;
 
         let detallesArchivos = '';
         if (data.archivosConfig && data.archivosConfig.length > 0) {
@@ -60,16 +70,36 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             `💰 *Total Pagado:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        try { await provider.sendMessage(adminOrderJid, msgAdmin, {}); } catch (err) {}
+        try { 
+            await provider.sendMessage(adminOrderJid, msgAdmin, {}); 
+        } catch (err) {
+            console.error("Error enviando mensaje resumen al admin de órdenes:", err);
+        }
 
         for (let i = 0; i < (data.archivos || []).length; i++) {
-            const pathItem = data.archivos[i];
+            let pathItem = data.archivos[i];
+            if (typeof pathItem === 'string' && !pathItem.startsWith('MSG_ID:') && !pathItem.startsWith('LINK:')) {
+                pathItem = path.resolve(pathItem);
+            } else if (typeof pathItem === 'object' && pathItem.filePath && !pathItem.filePath.startsWith('MSG_ID:') && !pathItem.filePath.startsWith('LINK:')) {
+                pathItem = { ...pathItem, filePath: path.resolve(pathItem.filePath) };
+            }
             const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
             const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
+            try {
+                await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
+            } catch (errDeliver) {
+                console.error(`Error entregando archivo ${i+1} al admin de órdenes:`, errDeliver);
+            }
         }
         
-        await deliverFileToRecipient(provider, adminOrderJid, comprobantePath, '💰 Comprobante de Pago');
+        if (comprobantePath) {
+            const resolvedCompPath = comprobantePath.startsWith('MSG_ID:') ? comprobantePath : path.resolve(comprobantePath);
+            try {
+                await deliverFileToRecipient(provider, adminOrderJid, resolvedCompPath, '💰 Comprobante de Pago');
+            } catch (errComp) {
+                console.error("Error entregando comprobante al admin de órdenes:", errComp);
+            }
+        }
 
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pedidoExitoso || '✅ ¡Tu pedido ha sido recibido con éxito! 🎉\nUn asesor revisará tus archivos y tu pago, y te contactará por este medio para confirmarlo.\n¡Gracias por preferir CAD Impresiones!');
@@ -89,10 +119,17 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
     });
 
 export const flowRecibirPago = addKeyword(EVENTS.ACTION)
-    .addAnswer(['📱 *Pago por Transferencia*\nAceptamos Bancolombia, Nequi y Daviplata.'].join('\n'), { media: './assets/qr_pagos.png', delay: 1500 })
-    .addAnswer(['👉 Por favor envía la *foto o captura de tu comprobante de pago* por este medio.\n\n*0.* ⬅️ Cancelar pedido'].join('\n'), { delay: 1500 },
-        async (ctx, { gotoFlow }) => gotoFlow(flowRecibirPagoLoop)
-    );
+    .addAction(async (ctx, { provider, flowDynamic, gotoFlow }) => {
+        await new Promise(r => setTimeout(r, 1000));
+        await safeSendPaymentMedia(
+            provider,
+            ctx.from,
+            '📱 *Pago por Transferencia*\nAceptamos Bancolombia, Nequi y Daviplata.'
+        );
+        await new Promise(r => setTimeout(r, 1500));
+        await flowDynamic('👉 Por favor envía la *foto o captura de tu comprobante de pago* por este medio.\n\n*0.* ⬅️ Cancelar pedido');
+        return gotoFlow(flowRecibirPagoLoop);
+    });
 
 export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, provider, gotoFlow, flowDynamic }) => {
@@ -103,8 +140,9 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
-        const data = state.getMyState();
-        const adminOrderJid = BOT_SETTINGS.adminOrdersPhone?.split(',')[0]?.trim() || PRODUCTION_FILES_JID;
+        const data = state.getMyState() || {};
+        const normalizedJids = normalizeAdminJids(BOT_SETTINGS.adminOrdersPhone);
+        const adminOrderJid = normalizedJids[0] || PRODUCTION_FILES_JID;
         const rawNumber = ctx.from.split('@')[0];
         
         let detallesArchivos = '';
@@ -122,12 +160,26 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
             `💰 *Total a Cobrar:* $${data.totalPrice || 0}` +
             detallesArchivos;
 
-        try { await provider.sendMessage(adminOrderJid, msgAdmin, {}); } catch (err) { }
+        try { 
+            await provider.sendMessage(adminOrderJid, msgAdmin, {}); 
+        } catch (err) {
+            console.error("Error enviando mensaje resumen en efectivo:", err);
+        }
+
         for (let i = 0; i < (data.archivos || []).length; i++) {
-            const pathItem = data.archivos[i];
+            let pathItem = data.archivos[i];
+            if (typeof pathItem === 'string' && !pathItem.startsWith('MSG_ID:') && !pathItem.startsWith('LINK:')) {
+                pathItem = path.resolve(pathItem);
+            } else if (typeof pathItem === 'object' && pathItem.filePath && !pathItem.filePath.startsWith('MSG_ID:') && !pathItem.filePath.startsWith('LINK:')) {
+                pathItem = { ...pathItem, filePath: path.resolve(pathItem.filePath) };
+            }
             const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
             const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
+            try {
+                await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
+            } catch (errDeliver) {
+                console.error(`Error entregando archivo ${i+1} en efectivo al admin:`, errDeliver);
+            }
         }
 
         await new Promise(r => setTimeout(r, 1500));

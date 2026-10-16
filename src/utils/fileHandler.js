@@ -595,11 +595,15 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
     }
 
     // Normalizar datos del archivo
-    let filePath = typeof fileItem === 'string' ? fileItem : fileItem.filePath;
-    let originalName = (typeof fileItem === 'object' && fileItem.originalName) ? fileItem.originalName : path.basename(filePath || '');
-    let isCad = (typeof fileItem === 'object' && fileItem.isCad) ? fileItem.isCad : false;
-    let isSpecial = (typeof fileItem === 'object' && fileItem.isSpecial) ? fileItem.isSpecial : false;
-    let msgId = (typeof fileItem === 'object' && fileItem.msgId) ? fileItem.msgId : '';
+    let filePath = typeof fileItem === 'string' ? fileItem : fileItem?.filePath;
+    let originalName = (typeof fileItem === 'object' && fileItem?.originalName) ? fileItem.originalName : path.basename(filePath || '');
+    let isCad = (typeof fileItem === 'object' && fileItem?.isCad) ? fileItem.isCad : false;
+    let isSpecial = (typeof fileItem === 'object' && fileItem?.isSpecial) ? fileItem.isSpecial : false;
+    let msgId = (typeof fileItem === 'object' && fileItem?.msgId) ? fileItem.msgId : '';
+
+    if (filePath && !filePath.startsWith('MSG_ID:') && !filePath.startsWith('LINK:')) {
+        filePath = path.resolve(filePath);
+    }
 
     if (!isCad && filePath) {
         const ext = filePath.split('.').pop().toLowerCase();
@@ -620,18 +624,38 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
     // ESTRATEGIA 1: Envío directo del archivo original
     // ==========================================
     if (filePath && fs.existsSync(filePath)) {
-        try {
-            if (client && typeof client.sendFile === 'function') {
-                await client.sendFile(recipientJid, filePath, originalName, caption);
+        // Intento 1A: client.sendFile con waitForAck: false (evita TimeoutError de 30s)
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(recipientJid, filePath, {
+                    filename: originalName,
+                    caption: caption || '',
+                    waitForAck: false
+                });
                 directSent = true;
-                console.log(`✅ [FileHandler] Envío directo exitoso a ${recipientJid}: ${originalName}`);
-            } else if (provider && typeof provider.sendMedia === 'function') {
-                await provider.sendMedia(recipientJid, filePath, caption);
-                directSent = true;
-                console.log(`✅ [FileHandler] Envío sendMedia exitoso a ${recipientJid}: ${originalName}`);
+                console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (options) a ${recipientJid}: ${originalName}`);
+            } catch (errDirectOpt) {
+                console.warn(`⚠️ [FileHandler] client.sendFile (options) falló para ${originalName}: ${errDirectOpt.message}`);
+                // Intento 1B: client.sendFile con firma posicional tradicional
+                try {
+                    await client.sendFile(recipientJid, filePath, originalName, caption || '');
+                    directSent = true;
+                    console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (posicional) a ${recipientJid}: ${originalName}`);
+                } catch (errDirectPos) {
+                    console.warn(`⚠️ [FileHandler] client.sendFile (posicional) falló para ${originalName}: ${errDirectPos.message}`);
+                }
             }
-        } catch (errDirect) {
-            console.warn(`⚠️ [FileHandler] Envío directo falló para ${originalName}: ${errDirect.message}`);
+        }
+
+        // Intento 1C: Fallback con provider.sendMedia (ejecutado SIEMPRE que client.sendFile falle o no exista)
+        if (!directSent && provider && typeof provider.sendMedia === 'function') {
+            try {
+                await provider.sendMedia(recipientJid, filePath, caption || '');
+                directSent = true;
+                console.log(`✅ [FileHandler] Envío directo exitoso vía provider.sendMedia a ${recipientJid}: ${originalName}`);
+            } catch (errDirectMedia) {
+                console.warn(`⚠️ [FileHandler] provider.sendMedia falló para ${originalName}: ${errDirectMedia.message}`);
+            }
         }
     }
 
@@ -643,7 +667,7 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
     if (filePath && fs.existsSync(filePath) && (isCad || isSpecial || !directSent)) {
         try {
             const baseWithoutExt = path.basename(filePath, path.extname(filePath));
-            const zipPath = path.join(path.dirname(filePath), `${baseWithoutExt}.zip`);
+            const zipPath = path.resolve(path.join(path.dirname(filePath), `${baseWithoutExt}.zip`));
             const zipDisplayName = `${path.parse(originalName).name}.zip`;
 
             // Crear el ZIP con el archivo original en su interior
@@ -653,13 +677,37 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
                 ? `📦 *Copia en .ZIP (Garantía de descarga para móvil/PC):* ${zipDisplayName}`
                 : `${caption}\n📦 *(Archivo comprimido en .ZIP para compatibilidad)*`;
 
+            // Intento 2A: client.sendFile con waitForAck: false
             if (client && typeof client.sendFile === 'function') {
-                await client.sendFile(recipientJid, zipPath, zipDisplayName, zipCaption);
-                zipSent = true;
-                console.log(`✅ [FileHandler] Envío ZIP exitoso a ${recipientJid}: ${zipDisplayName}`);
-            } else if (provider && typeof provider.sendMedia === 'function') {
-                await provider.sendMedia(recipientJid, zipPath, zipCaption);
-                zipSent = true;
+                try {
+                    await client.sendFile(recipientJid, zipPath, {
+                        filename: zipDisplayName,
+                        caption: zipCaption,
+                        waitForAck: false
+                    });
+                    zipSent = true;
+                    console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (options) a ${recipientJid}: ${zipDisplayName}`);
+                } catch (errZipOpt) {
+                    console.warn(`⚠️ [FileHandler] client.sendFile ZIP (options) falló: ${errZipOpt.message}`);
+                    try {
+                        await client.sendFile(recipientJid, zipPath, zipDisplayName, zipCaption);
+                        zipSent = true;
+                        console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (posicional) a ${recipientJid}: ${zipDisplayName}`);
+                    } catch (errZipPos) {
+                        console.warn(`⚠️ [FileHandler] client.sendFile ZIP (posicional) falló: ${errZipPos.message}`);
+                    }
+                }
+            }
+
+            // Intento 2B: Fallback con provider.sendMedia para el ZIP
+            if (!zipSent && provider && typeof provider.sendMedia === 'function') {
+                try {
+                    await provider.sendMedia(recipientJid, zipPath, zipCaption);
+                    zipSent = true;
+                    console.log(`✅ [FileHandler] Envío ZIP exitoso vía provider.sendMedia a ${recipientJid}: ${zipDisplayName}`);
+                } catch (errZipMedia) {
+                    console.warn(`⚠️ [FileHandler] provider.sendMedia ZIP falló: ${errZipMedia.message}`);
+                }
             }
         } catch (errZip) {
             console.error(`⚠️ [FileHandler] Error generando/enviando ZIP para ${originalName}:`, errZip);
@@ -796,10 +844,30 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
             const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP*\nContiene todos los ${physicalFiles.length} archivos de *${name}* en un solo paquete descargable.`;
             const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
             
+            let zipBundleSent = false;
             if (client && typeof client.sendFile === 'function') {
-                await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
-            } else if (provider && typeof provider.sendMedia === 'function') {
-                await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
+                try {
+                    await client.sendFile(adminJid, bundleZipPath, {
+                        filename: `Archivos_${safeName}.zip`,
+                        caption: bundleCaption,
+                        waitForAck: false
+                    });
+                    zipBundleSent = true;
+                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile a ${adminJid}`);
+                } catch (eZipB1) {
+                    try {
+                        await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
+                        zipBundleSent = true;
+                        console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (posicional) a ${adminJid}`);
+                    } catch (eZipB2) {}
+                }
+            }
+            if (!zipBundleSent && provider && typeof provider.sendMedia === 'function') {
+                try {
+                    await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
+                    zipBundleSent = true;
+                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía provider.sendMedia a ${adminJid}`);
+                } catch (eZipB3) {}
             }
         } catch (errBundle) {
             console.error("Error creando paquete ZIP consolidado:", errBundle);
