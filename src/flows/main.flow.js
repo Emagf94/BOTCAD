@@ -12,7 +12,8 @@ import {
     getFileReference,
     downloadAndSaveIncomingFile,
     extractCloudLinks,
-    safeSendLogo
+    safeSendLogo,
+    getWppClient
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
 import { flowEnvioDirectoArchivos, flowPagosFAQ, flowFAQ } from './faq.flow.js';
@@ -50,7 +51,7 @@ export const flowCancelar = addKeyword(EVENTS.ACTION)
         globalFilesCache.delete(ctx.from + '_directo');
         await state.update({ archivos: [], archivosConfig: [], currentFileIndex: 0, itemName: '', tempSize: '' });
         try {
-            const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+            const client = await getWppClient(provider);
             if (client && client.sendImageAsSticker) {
                 await client.sendImageAsSticker(ctx.from, './assets/chat_f.webp');
             } else {

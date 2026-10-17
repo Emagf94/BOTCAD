@@ -1,7 +1,7 @@
 import path from 'path';
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia, getWppClient } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -106,7 +106,7 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
         try {
             if (BOT_MEDIA.sendStickers !== false) {
                 const stickerPath = BOT_MEDIA.stickerFinishedChat || './assets/chat_f.webp';
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                const client = await getWppClient(provider);
                 if (client && client.sendImageAsSticker) {
                     await client.sendImageAsSticker(`${ctx.from}`, stickerPath);
                 } else {
@@ -185,7 +185,7 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pagoEfectivo || '🏢 Has elegido pago en *Efectivo*.\n⚠️ Recuerda que debes acercarte a nuestro local para realizar el pago, y *solo en ese momento se iniciará la impresión*.\n¡Te esperamos en CAD Impresiones!');
         try {
-            const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+            const client = await getWppClient(provider);
             if (client && client.sendImageAsSticker) {
                 await client.sendImageAsSticker(`${ctx.from}`, './assets/chat_f.webp');
             } else {

@@ -12,7 +12,8 @@ import {
     getFileReference,
     downloadAndSaveIncomingFile,
     deliverFileToRecipient,
-    normalizeAdminJids
+    normalizeAdminJids,
+    getWppClient
 } from '../utils/helpers.js';
 import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
@@ -78,7 +79,7 @@ export const endActiveSupportChat = async (provider, adminFrom) => {
             } catch (e) {}
 
             try {
-                const client = provider.getInstance ? provider.getInstance() : provider.vendor;
+                const client = await getWppClient(provider);
                 if (client && client.sendImageAsSticker) {
                     await client.sendImageAsSticker(clientPhone, './assets/chat_f.webp');
                 } else {

@@ -425,10 +425,44 @@ const withTimeout = (promise, ms = 30000, operationName = 'Operación') => {
     });
 };
 
+/**
+ * Obtiene de forma segura y unificada la instancia nativa del cliente WPPConnect
+ * desde el proveedor de BuilderBot (WPPConnectProvider).
+ * Soporta resolución síncrona y asíncrona (Promise) de getInstance, y acceso directo a .vendor.
+ * @param {object} provider Instancia del proveedor BuilderBot
+ * @returns {Promise<object|null>} Cliente nativo WPPConnect o null
+ */
+export const getWppClient = async (provider) => {
+    if (!provider) return null;
+
+    // 1. Acceso directo al vendor de WPPConnect (forma nativa directa en BuilderBot WPPConnect)
+    if (provider.vendor && (typeof provider.vendor.sendFile === 'function' || typeof provider.vendor.sendImage === 'function')) {
+        return provider.vendor;
+    }
+
+    // 2. Si getInstance es función, evaluar si devuelve el cliente directamente o una Promesa
+    if (typeof provider.getInstance === 'function') {
+        try {
+            const res = provider.getInstance();
+            const client = (res && typeof res.then === 'function') ? await res : res;
+            if (client && (typeof client.sendFile === 'function' || typeof client.sendImage === 'function')) {
+                return client;
+            }
+        } catch (e) {
+            console.warn(`[getWppClient] provider.getInstance() falló:`, e.message);
+        }
+    }
+
+    // 3. Fallbacks secundarios
+    if (provider.vendor) return provider.vendor;
+    if (provider.client) return provider.client;
+    return provider;
+};
+
 export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './downloads') => {
     fs.mkdirSync(targetDir, { recursive: true });
     const serializedMsgId = serializeMessageId(ctx);
-    const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+    const client = await getWppClient(provider);
 
     let buffer = null;
 
@@ -554,7 +588,7 @@ export const normalizeAdminJids = (adminPhonesInput) => {
  * @returns {Promise<{ success: boolean, method: string, error?: string }>}
  */
 export const deliverFileToRecipient = async (provider, recipientJid, fileItem, caption = '') => {
-    const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+    const client = await getWppClient(provider);
 
     // Manejo de enlaces (Google Drive, OneDrive, SharePoint, Dropbox, etc.)
     const isLink = (typeof fileItem === 'string' && fileItem.startsWith('LINK:')) ||
@@ -624,30 +658,55 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
     // ESTRATEGIA 1: Envío directo del archivo original
     // ==========================================
     if (filePath && fs.existsSync(filePath)) {
-        // Intento 1A: client.sendFile con waitForAck: false (evita TimeoutError de 30s)
+        // Intento 1A: client.sendFile con firma posicional tradicional (to, path, filename, caption)
         if (client && typeof client.sendFile === 'function') {
             try {
-                await client.sendFile(recipientJid, filePath, {
-                    filename: originalName,
-                    caption: caption || '',
-                    waitForAck: false
-                });
+                await client.sendFile(recipientJid, filePath, originalName, caption || '');
                 directSent = true;
-                console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (options) a ${recipientJid}: ${originalName}`);
-            } catch (errDirectOpt) {
-                console.warn(`⚠️ [FileHandler] client.sendFile (options) falló para ${originalName}: ${errDirectOpt.message}`);
-                // Intento 1B: client.sendFile con firma posicional tradicional
+                console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (posicional) a ${recipientJid}: ${originalName}`);
+            } catch (errDirectPos) {
+                console.warn(`⚠️ [FileHandler] client.sendFile (posicional) falló para ${originalName}: ${errDirectPos.message}`);
+                // Intento 1B: client.sendFile con objeto de opciones y waitForAck: false
                 try {
-                    await client.sendFile(recipientJid, filePath, originalName, caption || '');
+                    await client.sendFile(recipientJid, filePath, {
+                        filename: originalName,
+                        caption: caption || '',
+                        waitForAck: false
+                    });
                     directSent = true;
-                    console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (posicional) a ${recipientJid}: ${originalName}`);
-                } catch (errDirectPos) {
-                    console.warn(`⚠️ [FileHandler] client.sendFile (posicional) falló para ${originalName}: ${errDirectPos.message}`);
+                    console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendFile (options) a ${recipientJid}: ${originalName}`);
+                } catch (errDirectOpt) {
+                    console.warn(`⚠️ [FileHandler] client.sendFile (options) falló para ${originalName}: ${errDirectOpt.message}`);
                 }
             }
         }
 
-        // Intento 1C: Fallback con provider.sendMedia (ejecutado SIEMPRE que client.sendFile falle o no exista)
+        // Intento 1C: Si es una imagen y sendImage está disponible
+        if (!directSent && client && typeof client.sendImage === 'function') {
+            const ext = filePath.split('.').pop().toLowerCase();
+            if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+                try {
+                    await client.sendImage(recipientJid, filePath, originalName, caption || '');
+                    directSent = true;
+                    console.log(`✅ [FileHandler] Envío directo exitoso vía client.sendImage a ${recipientJid}: ${originalName}`);
+                } catch (errSendImg) {
+                    console.warn(`⚠️ [FileHandler] client.sendImage falló para ${originalName}: ${errSendImg.message}`);
+                }
+            }
+        }
+
+        // Intento 1D: Fallback con provider.sendMessage({ media: filePath })
+        if (!directSent && provider && typeof provider.sendMessage === 'function') {
+            try {
+                await provider.sendMessage(recipientJid, caption || '', { media: filePath });
+                directSent = true;
+                console.log(`✅ [FileHandler] Envío directo exitoso vía provider.sendMessage (media) a ${recipientJid}: ${originalName}`);
+            } catch (errSendMsg) {
+                console.warn(`⚠️ [FileHandler] provider.sendMessage (media) falló para ${originalName}: ${errSendMsg.message}`);
+            }
+        }
+
+        // Intento 1E: Fallback con provider.sendMedia
         if (!directSent && provider && typeof provider.sendMedia === 'function') {
             try {
                 await provider.sendMedia(recipientJid, filePath, caption || '');
@@ -677,29 +736,40 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
                 ? `📦 *Copia en .ZIP (Garantía de descarga para móvil/PC):* ${zipDisplayName}`
                 : `${caption}\n📦 *(Archivo comprimido en .ZIP para compatibilidad)*`;
 
-            // Intento 2A: client.sendFile con waitForAck: false
+            // Intento 2A: client.sendFile posicional primero
             if (client && typeof client.sendFile === 'function') {
                 try {
-                    await client.sendFile(recipientJid, zipPath, {
-                        filename: zipDisplayName,
-                        caption: zipCaption,
-                        waitForAck: false
-                    });
+                    await client.sendFile(recipientJid, zipPath, zipDisplayName, zipCaption);
                     zipSent = true;
-                    console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (options) a ${recipientJid}: ${zipDisplayName}`);
-                } catch (errZipOpt) {
-                    console.warn(`⚠️ [FileHandler] client.sendFile ZIP (options) falló: ${errZipOpt.message}`);
+                    console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (posicional) a ${recipientJid}: ${zipDisplayName}`);
+                } catch (errZipPos) {
+                    console.warn(`⚠️ [FileHandler] client.sendFile ZIP (posicional) falló: ${errZipPos.message}`);
                     try {
-                        await client.sendFile(recipientJid, zipPath, zipDisplayName, zipCaption);
+                        await client.sendFile(recipientJid, zipPath, {
+                            filename: zipDisplayName,
+                            caption: zipCaption,
+                            waitForAck: false
+                        });
                         zipSent = true;
-                        console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (posicional) a ${recipientJid}: ${zipDisplayName}`);
-                    } catch (errZipPos) {
-                        console.warn(`⚠️ [FileHandler] client.sendFile ZIP (posicional) falló: ${errZipPos.message}`);
+                        console.log(`✅ [FileHandler] Envío ZIP exitoso vía client.sendFile (options) a ${recipientJid}: ${zipDisplayName}`);
+                    } catch (errZipOpt) {
+                        console.warn(`⚠️ [FileHandler] client.sendFile ZIP (options) falló: ${errZipOpt.message}`);
                     }
                 }
             }
 
-            // Intento 2B: Fallback con provider.sendMedia para el ZIP
+            // Intento 2B: Fallback con provider.sendMessage({ media: zipPath })
+            if (!zipSent && provider && typeof provider.sendMessage === 'function') {
+                try {
+                    await provider.sendMessage(recipientJid, zipCaption, { media: zipPath });
+                    zipSent = true;
+                    console.log(`✅ [FileHandler] Envío ZIP exitoso vía provider.sendMessage a ${recipientJid}: ${zipDisplayName}`);
+                } catch (errZipMsg) {
+                    console.warn(`⚠️ [FileHandler] provider.sendMessage ZIP falló: ${errZipMsg.message}`);
+                }
+            }
+
+            // Intento 2C: Fallback con provider.sendMedia para el ZIP
             if (!zipSent && provider && typeof provider.sendMedia === 'function') {
                 try {
                     await provider.sendMedia(recipientJid, zipPath, zipCaption);
@@ -842,32 +912,39 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
 
             createZipArchive(filesToZip, bundleZipPath);
             const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP*\nContiene todos los ${physicalFiles.length} archivos de *${name}* en un solo paquete descargable.`;
-            const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+            const client = await getWppClient(provider);
             
             let zipBundleSent = false;
             if (client && typeof client.sendFile === 'function') {
                 try {
-                    await client.sendFile(adminJid, bundleZipPath, {
-                        filename: `Archivos_${safeName}.zip`,
-                        caption: bundleCaption,
-                        waitForAck: false
-                    });
+                    await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
                     zipBundleSent = true;
-                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile a ${adminJid}`);
+                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (posicional) a ${adminJid}`);
                 } catch (eZipB1) {
                     try {
-                        await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
+                        await client.sendFile(adminJid, bundleZipPath, {
+                            filename: `Archivos_${safeName}.zip`,
+                            caption: bundleCaption,
+                            waitForAck: false
+                        });
                         zipBundleSent = true;
-                        console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (posicional) a ${adminJid}`);
+                        console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (options) a ${adminJid}`);
                     } catch (eZipB2) {}
                 }
+            }
+            if (!zipBundleSent && provider && typeof provider.sendMessage === 'function') {
+                try {
+                    await provider.sendMessage(adminJid, bundleCaption, { media: bundleZipPath });
+                    zipBundleSent = true;
+                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía provider.sendMessage a ${adminJid}`);
+                } catch (eZipB3) {}
             }
             if (!zipBundleSent && provider && typeof provider.sendMedia === 'function') {
                 try {
                     await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
                     zipBundleSent = true;
                     console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía provider.sendMedia a ${adminJid}`);
-                } catch (eZipB3) {}
+                } catch (eZipB4) {}
             }
         } catch (errBundle) {
             console.error("Error creando paquete ZIP consolidado:", errBundle);

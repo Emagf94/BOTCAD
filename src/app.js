@@ -5,7 +5,7 @@ import { initBotConfig } from './botConfig.js';
 import { allFlows } from './flows/index.js';
 import fs from 'fs';
 import { initSessionGuard, startPeriodicBackups, cleanCorruptLockfiles, restoreSessionIfNeeded } from './sessionGuard.js';
-import { activeBridgeChats, isAdmin } from './utils/helpers.js';
+import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -127,6 +127,24 @@ const main = async () => {
     
     botInstance.httpServer(+PORT);
     console.log(`🚀 [CAD Bot] Servidor y bot iniciados correctamente en el puerto ${PORT}`);
+
+    // Diagnóstico de inicialización de WPPConnect / BuilderBot (no bloqueante)
+    setTimeout(async () => {
+        try {
+            const client = await getWppClient(adapterProvider);
+            console.log(`🔍 [DIAGNÓSTICO WPPCONNECT]`);
+            console.log(`   - adapterProvider.vendor: ${!!adapterProvider.vendor}`);
+            console.log(`   - adapterProvider.getInstance: ${typeof adapterProvider.getInstance}`);
+            console.log(`   - getWppClient resuelto: ${!!client}`);
+            if (client) {
+                console.log(`   - client.sendFile: ${typeof client.sendFile}`);
+                console.log(`   - client.sendImage: ${typeof client.sendImage}`);
+                console.log(`   - client.sendImageAsSticker: ${typeof client.sendImageAsSticker}`);
+            }
+        } catch (diagErr) {
+            console.warn(`⚠️ [DIAGNÓSTICO] Error en verificación: ${diagErr.message}`);
+        }
+    }, 10000);
 
     // =====================================================================
     // WATCHDOG: VIGILANTE DE CONEXIÓN RESILIENTE

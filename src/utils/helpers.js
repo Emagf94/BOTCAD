@@ -1,7 +1,21 @@
 import fs from 'fs';
 import path from 'path';
-import { BOT_SETTINGS } from '../botConfig.js';
+import { BOT_SETTINGS, BOT_MEDIA } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
+import {
+    getWppClient,
+    extractFileMetadata,
+    extractCloudLinks,
+    serializeMessageId,
+    downloadAndSaveIncomingFile,
+    deliverFileToRecipient,
+    deliverFilePackageToAdmin,
+    createZipArchive,
+    normalizeAdminJids,
+    PRODUCTION_FILES_JID,
+    CAD_EXTENSIONS,
+    SPECIAL_EXTENSIONS
+} from './fileHandler.js';
 
 // ==========================================
 // ESTADOS GLOBALES EN MEMORIA
@@ -102,35 +116,18 @@ export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
             return false;
         }
 
-        const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
-        let sent = false;
-
-        // Estrategia 1: sendFile de WPPConnect con waitForAck: false
-        if (client && typeof client.sendFile === 'function') {
-            try {
-                await client.sendFile(jid, qrPath, {
-                    filename: 'qr_pagos.png',
-                    caption: caption || '',
-                    waitForAck: false
-                });
-                sent = true;
-                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (options) a ${jid}`);
-            } catch (e1) {
-                console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (options) falló: ${e1.message}`);
-                try {
-                    await client.sendFile(jid, qrPath, 'qr_pagos.png', caption || '');
-                    sent = true;
-                    console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
-                } catch (e1b) {
-                    console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (posicional) falló: ${e1b.message}`);
-                }
-            }
+        if (BOT_MEDIA && BOT_MEDIA.sendPaymentQR === false) {
+            if (caption) await provider.sendMessage(jid, caption, {});
+            return true;
         }
 
-        // Estrategia 2: sendImage de WPPConnect
-        if (!sent && client && typeof client.sendImage === 'function') {
+        const client = await getWppClient(provider);
+        let sent = false;
+
+        // Estrategia 1: sendImage de WPPConnect (método nativo ideal para imágenes png)
+        if (client && typeof client.sendImage === 'function') {
             try {
-                await client.sendImage(jid, qrPath, 'qr_pagos.png', caption);
+                await client.sendImage(jid, qrPath, 'qr_pagos.png', caption || '');
                 sent = true;
                 console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendImage a ${jid}`);
             } catch (e2) {
@@ -138,10 +135,43 @@ export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
             }
         }
 
-        // Estrategia 3: provider.sendMedia
+        // Estrategia 2: sendFile de WPPConnect con firma posicional tradicional
+        if (!sent && client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(jid, qrPath, 'qr_pagos.png', caption || '');
+                sent = true;
+                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
+            } catch (e1b) {
+                console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (posicional) falló: ${e1b.message}`);
+                try {
+                    await client.sendFile(jid, qrPath, {
+                        filename: 'qr_pagos.png',
+                        caption: caption || '',
+                        waitForAck: false
+                    });
+                    sent = true;
+                    console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía client.sendFile (options) a ${jid}`);
+                } catch (e1) {
+                    console.warn(`⚠️ [safeSendPaymentMedia] client.sendFile (options) falló: ${e1.message}`);
+                }
+            }
+        }
+
+        // Estrategia 3: provider.sendMessage con { media } (forma estándar BuilderBot)
+        if (!sent && provider && typeof provider.sendMessage === 'function') {
+            try {
+                await provider.sendMessage(jid, caption || '', { media: qrPath });
+                sent = true;
+                console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía provider.sendMessage (media) a ${jid}`);
+            } catch (eMedia) {
+                console.warn(`⚠️ [safeSendPaymentMedia] provider.sendMessage (media) falló: ${eMedia.message}`);
+            }
+        }
+
+        // Estrategia 4: provider.sendMedia
         if (!sent && provider && typeof provider.sendMedia === 'function') {
             try {
-                await provider.sendMedia(jid, qrPath, caption);
+                await provider.sendMedia(jid, qrPath, caption || '');
                 sent = true;
                 console.log(`✅ [safeSendPaymentMedia] QR enviado exitosamente vía provider.sendMedia a ${jid}`);
             } catch (e3) {
@@ -166,11 +196,12 @@ export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
 
 /**
  * Envía la imagen de logo de saludo de forma segura sin riesgo de congelar el bot ni lanzar excepciones en flowDynamic.
+ * Prioriza el envío de logo.png como STICKER según la preferencia del usuario.
  * Utiliza ruta absoluta con path.resolve y fallback controlado a mensaje de texto si la multimedia falla.
  * @param {object} provider Instancia del proveedor BuilderBot
  * @param {string} jid Destinatario
  * @param {string} caption Mensaje o pie de foto
- * @returns {Promise<boolean>} true si se envió la imagen, false si se usó fallback de texto
+ * @returns {Promise<boolean>} true si se envió la imagen/sticker, false si se usó fallback de texto
  */
 export const safeSendLogo = async (provider, jid, caption = '') => {
     try {
@@ -181,32 +212,76 @@ export const safeSendLogo = async (provider, jid, caption = '') => {
             return false;
         }
 
-        const client = provider?.getInstance ? provider.getInstance() : provider?.vendor;
+        if (BOT_MEDIA && BOT_MEDIA.sendLogo === false) {
+            if (caption) await provider.sendMessage(jid, caption, {});
+            return true;
+        }
+
+        const client = await getWppClient(provider);
         let sent = false;
 
-        // Estrategia 1: sendFile de WPPConnect con waitForAck: false
-        if (client && typeof client.sendFile === 'function') {
+        // Estrategia 1: Enviar como STICKER (Solicitud del usuario para logo.png en bienvenida)
+        if (BOT_MEDIA?.sendStickers !== false && client && typeof client.sendImageAsSticker === 'function') {
             try {
-                await client.sendFile(jid, logoPath, {
-                    filename: 'logo.png',
-                    caption: caption || '',
-                    waitForAck: false
-                });
+                await client.sendImageAsSticker(jid, logoPath);
                 sent = true;
-                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (options) a ${jid}`);
-            } catch (e1) {
-                console.warn(`⚠️ [safeSendLogo] client.sendFile (options) falló: ${e1.message}`);
+                console.log(`✅ [safeSendLogo] Logo enviado como STICKER exitosamente a ${jid}`);
+                // En WhatsApp los stickers no llevan pie de foto (caption), enviamos el texto de bienvenida a continuación
+                if (caption) {
+                    await new Promise(r => setTimeout(r, 600));
+                    await provider.sendMessage(jid, caption, {});
+                }
+                return true;
+            } catch (errSticker) {
+                console.warn(`⚠️ [safeSendLogo] Envío como sticker falló: ${errSticker.message}. Intentando envío como imagen...`);
+            }
+        }
+
+        // Estrategia 2: sendImage de WPPConnect (imagen regular con pie de foto)
+        if (!sent && client && typeof client.sendImage === 'function') {
+            try {
+                await client.sendImage(jid, logoPath, 'logo.png', caption || '');
+                sent = true;
+                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendImage a ${jid}`);
+            } catch (eImg) {
+                console.warn(`⚠️ [safeSendLogo] client.sendImage falló: ${eImg.message}`);
+            }
+        }
+
+        // Estrategia 3: sendFile de WPPConnect (posicional primero)
+        if (!sent && client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(jid, logoPath, 'logo.png', caption || '');
+                sent = true;
+                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
+            } catch (e1b) {
+                console.warn(`⚠️ [safeSendLogo] client.sendFile (posicional) falló: ${e1b.message}`);
                 try {
-                    await client.sendFile(jid, logoPath, 'logo.png', caption || '');
+                    await client.sendFile(jid, logoPath, {
+                        filename: 'logo.png',
+                        caption: caption || '',
+                        waitForAck: false
+                    });
                     sent = true;
-                    console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (posicional) a ${jid}`);
-                } catch (e1b) {
-                    console.warn(`⚠️ [safeSendLogo] client.sendFile (posicional) falló: ${e1b.message}`);
+                    console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía client.sendFile (options) a ${jid}`);
+                } catch (e1) {
+                    console.warn(`⚠️ [safeSendLogo] client.sendFile (options) falló: ${e1.message}`);
                 }
             }
         }
 
-        // Estrategia 2: provider.sendMedia como respaldo
+        // Estrategia 4: provider.sendMessage con { media }
+        if (!sent && provider && typeof provider.sendMessage === 'function') {
+            try {
+                await provider.sendMessage(jid, caption || '', { media: logoPath });
+                sent = true;
+                console.log(`✅ [safeSendLogo] Logo enviado exitosamente vía provider.sendMessage (media) a ${jid}`);
+            } catch (eMedia) {
+                console.warn(`⚠️ [safeSendLogo] provider.sendMessage (media) falló: ${eMedia.message}`);
+            }
+        }
+
+        // Estrategia 5: provider.sendMedia como respaldo
         if (!sent && provider && typeof provider.sendMedia === 'function') {
             try {
                 await provider.sendMedia(jid, logoPath, caption || '');
@@ -417,21 +492,8 @@ export const formatName = (rawName) => {
         .join(' ');
 };
 
-import {
-    extractFileMetadata,
-    extractCloudLinks,
-    serializeMessageId,
-    downloadAndSaveIncomingFile,
-    deliverFileToRecipient,
-    deliverFilePackageToAdmin,
-    createZipArchive,
-    normalizeAdminJids,
-    PRODUCTION_FILES_JID,
-    CAD_EXTENSIONS,
-    SPECIAL_EXTENSIONS
-} from './fileHandler.js';
-
 export {
+    getWppClient,
     extractFileMetadata,
     extractCloudLinks,
     serializeMessageId,
