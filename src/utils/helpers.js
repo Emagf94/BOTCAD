@@ -4,6 +4,7 @@ import { BOT_SETTINGS, BOT_MEDIA } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
 import {
     getWppClient,
+    patchWppMediaPrep,
     extractFileMetadata,
     extractCloudLinks,
     serializeMessageId,
@@ -122,6 +123,7 @@ export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
         }
 
         const client = await getWppClient(provider);
+        if (client) await patchWppMediaPrep(client);
         let sent = false;
 
         // Estrategia 1: sendImage de WPPConnect (método nativo ideal para imágenes png)
@@ -218,6 +220,7 @@ export const safeSendLogo = async (provider, jid, caption = '') => {
         }
 
         const client = await getWppClient(provider);
+        if (client) await patchWppMediaPrep(client);
         let sent = false;
 
         // Estrategia 1: Enviar como STICKER (Solicitud del usuario para logo.png en bienvenida)
@@ -305,6 +308,46 @@ export const safeSendLogo = async (provider, jid, caption = '') => {
         }
         return false;
     }
+};
+
+/**
+ * Envía un sticker de forma segura verificando el parche de MediaPrep y con fallback a imagen.
+ * Evita excepciones no capturadas o bloqueos en el flujo conversacional del usuario.
+ * @param {object} provider Proveedor BuilderBot
+ * @param {string} jid Destinatario
+ * @param {string} stickerPath Ruta local del sticker (webp o png)
+ * @returns {Promise<boolean>}
+ */
+export const safeSendSticker = async (provider, jid, stickerPath) => {
+    if (!jid || !stickerPath) return false;
+    const resolvedPath = path.resolve(process.cwd(), stickerPath);
+    if (!fs.existsSync(resolvedPath)) {
+        console.warn(`⚠️ [safeSendSticker] Archivo de sticker no encontrado: ${resolvedPath}`);
+        return false;
+    }
+
+    try {
+        const client = await getWppClient(provider);
+        if (client) await patchWppMediaPrep(client);
+
+        if (client && typeof client.sendImageAsSticker === 'function') {
+            await client.sendImageAsSticker(jid, resolvedPath);
+            return true;
+        }
+
+        if (client && typeof client.sendImage === 'function') {
+            await client.sendImage(jid, resolvedPath, path.basename(resolvedPath), '');
+            return true;
+        }
+
+        if (provider && typeof provider.sendMedia === 'function') {
+            await provider.sendMedia(jid, resolvedPath, '');
+            return true;
+        }
+    } catch (err) {
+        console.warn(`⚠️ [safeSendSticker] Envío de sticker no completado (${err.message}). Continuando flujo normalmente.`);
+    }
+    return false;
 };
 
 // ==========================================

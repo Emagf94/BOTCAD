@@ -426,6 +426,62 @@ const withTimeout = (promise, ms = 30000, operationName = 'Operación') => {
 };
 
 /**
+ * Aplica un parche en tiempo de ejecución al contexto de WhatsApp Web en Chromium
+ * para corregir el bug de MediaPrep split (prepRawMedia movido a WAWebPrepRawMedia).
+ * Esto previene el error crítico "Cannot read properties of undefined (reading 'prepRawMedia')".
+ * @param {object} client Instancia de WPPConnect (Whatsapp o provider.vendor)
+ * @returns {Promise<boolean>} true si el módulo MediaPrep está disponible y funcional
+ */
+export const patchWppMediaPrep = async (client) => {
+    if (!client) return false;
+    try {
+        const page = client.page || client.vendor?.page || (typeof client.getPage === 'function' ? await client.getPage() : null);
+        if (!page || typeof page.evaluate !== 'function') return false;
+
+        const patched = await page.evaluate(() => {
+            try {
+                if (!window.WPP || !window.WPP.whatsapp) return false;
+
+                const mediaPrep = window.WPP.whatsapp.MediaPrep;
+                if (!mediaPrep || typeof mediaPrep.prepRawMedia !== 'function') {
+                    let found = null;
+                    let legacy = null;
+
+                    if (typeof window.require === 'function') {
+                        try { found = window.require('WAWebPrepRawMedia'); } catch (e) {}
+                        try { legacy = window.require('WAWebMediaPrep'); } catch (e) {}
+                    }
+
+                    if (found && (found.prepRawMedia || typeof found === 'function')) {
+                        const prepFn = found.prepRawMedia || found;
+                        const base = legacy || mediaPrep || {};
+                        const patchedModule = Object.assign({}, base, { prepRawMedia: prepFn });
+
+                        try {
+                            Object.defineProperty(window.WPP.whatsapp, 'MediaPrep', {
+                                configurable: true,
+                                enumerable: true,
+                                writable: true,
+                                value: patchedModule
+                            });
+                        } catch (eDef) {
+                            window.WPP.whatsapp.MediaPrep = patchedModule;
+                        }
+                        return true;
+                    }
+                }
+                return !!(window.WPP.whatsapp.MediaPrep && typeof window.WPP.whatsapp.MediaPrep.prepRawMedia === 'function');
+            } catch (err) {
+                return false;
+            }
+        });
+        return !!patched;
+    } catch {
+        return false;
+    }
+};
+
+/**
  * Obtiene de forma segura y unificada la instancia nativa del cliente WPPConnect
  * desde el proveedor de BuilderBot (WPPConnectProvider).
  * Soporta resolución síncrona y asíncrona (Promise) de getInstance, y acceso directo a .vendor.
@@ -435,18 +491,20 @@ const withTimeout = (promise, ms = 30000, operationName = 'Operación') => {
 export const getWppClient = async (provider) => {
     if (!provider) return null;
 
+    let client = null;
+
     // 1. Acceso directo al vendor de WPPConnect (forma nativa directa en BuilderBot WPPConnect)
     if (provider.vendor && (typeof provider.vendor.sendFile === 'function' || typeof provider.vendor.sendImage === 'function')) {
-        return provider.vendor;
+        client = provider.vendor;
     }
 
     // 2. Si getInstance es función, evaluar si devuelve el cliente directamente o una Promesa
-    if (typeof provider.getInstance === 'function') {
+    if (!client && typeof provider.getInstance === 'function') {
         try {
             const res = provider.getInstance();
-            const client = (res && typeof res.then === 'function') ? await res : res;
-            if (client && (typeof client.sendFile === 'function' || typeof client.sendImage === 'function')) {
-                return client;
+            const resolved = (res && typeof res.then === 'function') ? await res : res;
+            if (resolved && (typeof resolved.sendFile === 'function' || typeof resolved.sendImage === 'function')) {
+                client = resolved;
             }
         } catch (e) {
             console.warn(`[getWppClient] provider.getInstance() falló:`, e.message);
@@ -454,9 +512,18 @@ export const getWppClient = async (provider) => {
     }
 
     // 3. Fallbacks secundarios
-    if (provider.vendor) return provider.vendor;
-    if (provider.client) return provider.client;
-    return provider;
+    if (!client) {
+        if (provider.vendor) client = provider.vendor;
+        else if (provider.client) client = provider.client;
+        else client = provider;
+    }
+
+    // Aplicar parche preventivo no bloqueante de MediaPrep si el cliente tiene acceso a Chromium
+    if (client) {
+        patchWppMediaPrep(client).catch(() => {});
+    }
+
+    return client;
 };
 
 export const downloadAndSaveIncomingFile = async (ctx, provider, targetDir = './downloads') => {
@@ -589,6 +656,7 @@ export const normalizeAdminJids = (adminPhonesInput) => {
  */
 export const deliverFileToRecipient = async (provider, recipientJid, fileItem, caption = '') => {
     const client = await getWppClient(provider);
+    if (client) await patchWppMediaPrep(client);
 
     // Manejo de enlaces (Google Drive, OneDrive, SharePoint, Dropbox, etc.)
     const isLink = (typeof fileItem === 'string' && fileItem.startsWith('LINK:')) ||

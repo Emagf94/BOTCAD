@@ -6,6 +6,7 @@ import { allFlows } from './flows/index.js';
 import fs from 'fs';
 import { initSessionGuard, startPeriodicBackups, cleanCorruptLockfiles, restoreSessionIfNeeded } from './sessionGuard.js';
 import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
+import { patchWppMediaPrep } from './utils/fileHandler.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -140,6 +141,8 @@ const main = async () => {
                 console.log(`   - client.sendFile: ${typeof client.sendFile}`);
                 console.log(`   - client.sendImage: ${typeof client.sendImage}`);
                 console.log(`   - client.sendImageAsSticker: ${typeof client.sendImageAsSticker}`);
+                const isPatched = await patchWppMediaPrep(client);
+                console.log(`   - MediaPrep status (prepRawMedia): ${isPatched ? '✅ Activo / Protegido' : '⚠️ Pendiente'}`);
             }
         } catch (diagErr) {
             console.warn(`⚠️ [DIAGNÓSTICO] Error en verificación: ${diagErr.message}`);

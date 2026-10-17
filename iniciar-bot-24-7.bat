@@ -26,7 +26,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Verificar si node_modules existe, si no, instalar dependencias
+:: Verificar si node_modules existe o si wa-js requiere actualizacion al parche 4.7.1
 if not exist "node_modules\" (
     echo [INFO] Primera ejecucion detectada. Instalando dependencias del proyecto...
     call npm install
@@ -35,6 +35,14 @@ if not exist "node_modules\" (
         echo [ERROR] Hubo un problema instalando las dependencias.
         pause
         exit /b 1
+    )
+) else (
+    if exist "node_modules\@wppconnect\wa-js\package.json" (
+        findstr /C:"\"version\": \"4.7.1\"" "node_modules\@wppconnect\wa-js\package.json" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [INFO] Detectada version anterior de wa-js. Actualizando automaticamente a 4.7.1...
+            call npm install
+        )
     )
 )
 

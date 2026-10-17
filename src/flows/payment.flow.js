@@ -1,7 +1,7 @@
 import path from 'path';
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia, getWppClient } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia, safeSendSticker, getWppClient } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -103,18 +103,9 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
 
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pedidoExitoso || '✅ ¡Tu pedido ha sido recibido con éxito! 🎉\nUn asesor revisará tus archivos y tu pago, y te contactará por este medio para confirmarlo.\n¡Gracias por preferir CAD Impresiones!');
-        try {
-            if (BOT_MEDIA.sendStickers !== false) {
-                const stickerPath = BOT_MEDIA.stickerFinishedChat || './assets/chat_f.webp';
-                const client = await getWppClient(provider);
-                if (client && client.sendImageAsSticker) {
-                    await client.sendImageAsSticker(`${ctx.from}`, stickerPath);
-                } else {
-                    await provider.sendMedia(`${ctx.from}`, stickerPath, '');
-                }
-            }
-        } catch (e) {
-            console.error('Error enviando sticker:', e);
+        if (BOT_MEDIA.sendStickers !== false) {
+            const stickerPath = BOT_MEDIA.stickerFinishedChat || './assets/chat_f.webp';
+            await safeSendSticker(provider, ctx.from, stickerPath);
         }
     });
 
@@ -184,15 +175,9 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
 
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pagoEfectivo || '🏢 Has elegido pago en *Efectivo*.\n⚠️ Recuerda que debes acercarte a nuestro local para realizar el pago, y *solo en ese momento se iniciará la impresión*.\n¡Te esperamos en CAD Impresiones!');
-        try {
-            const client = await getWppClient(provider);
-            if (client && client.sendImageAsSticker) {
-                await client.sendImageAsSticker(`${ctx.from}`, './assets/chat_f.webp');
-            } else {
-                await provider.sendMedia(`${ctx.from}`, './assets/chat_f.webp', '');
-            }
-        } catch (e) {
-            console.error('Error enviando sticker:', e);
+        if (BOT_MEDIA.sendStickers !== false) {
+            const stickerPath = BOT_MEDIA.stickerFinishedChat || './assets/chat_f.webp';
+            await safeSendSticker(provider, ctx.from, stickerPath);
         }
     });
 

@@ -24,6 +24,7 @@
     "@builderbot/bot": "1.4.2",
     "@builderbot/provider-wppconnect": "^1.4.2",
     "@wppconnect-team/wppconnect": "^2.3.3",
+    "@wppconnect/wa-js": "^4.7.1",
     "firebase": "^12.19.0",
     "node-windows": "^1.0.0-beta.8",
     "pdf-lib": "^1.17.1",
@@ -39,6 +40,7 @@
   "license": "ISC",
   "overrides": {
     "@wppconnect-team/wppconnect": "^2.3.3",
+    "@wppconnect/wa-js": "^4.7.1",
     "sharp": "0.33.5"
   }
 }

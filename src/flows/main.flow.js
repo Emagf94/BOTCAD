@@ -13,6 +13,7 @@ import {
     downloadAndSaveIncomingFile,
     extractCloudLinks,
     safeSendLogo,
+    safeSendSticker,
     getWppClient
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
@@ -50,14 +51,7 @@ export const flowCancelar = addKeyword(EVENTS.ACTION)
         globalFilesCache.delete(ctx.from);
         globalFilesCache.delete(ctx.from + '_directo');
         await state.update({ archivos: [], archivosConfig: [], currentFileIndex: 0, itemName: '', tempSize: '' });
-        try {
-            const client = await getWppClient(provider);
-            if (client && client.sendImageAsSticker) {
-                await client.sendImageAsSticker(ctx.from, './assets/chat_f.webp');
-            } else {
-                await provider.sendMedia(ctx.from, './assets/chat_f.webp', '');
-            }
-        } catch (e) { }
+        await safeSendSticker(provider, ctx.from, './assets/chat_f.webp');
         return gotoFlow(flowMainMenu);
     });
 
