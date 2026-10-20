@@ -25,7 +25,7 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3008" ^| findstr "LISTENING
 )
 taskkill /F /IM chrome.exe >nul 2>&1
 
-echo [2/3] Eliminando sesion anterior para permitir nueva vinculacion...
+echo [2/3] Eliminando sesion anterior y backups para permitir nueva vinculacion...
 if exist "bot_sessions\" (
     rmdir /s /q "bot_sessions" >nul 2>&1
     if exist "bot_sessions\" (
@@ -34,6 +34,9 @@ if exist "bot_sessions\" (
         timeout /t 2 /nobreak >nul
         rmdir /s /q "bot_sessions" >nul 2>&1
     )
+)
+if exist "bot_sessions_backup\" (
+    rmdir /s /q "bot_sessions_backup" >nul 2>&1
 )
 if exist "bot.qr.png" del /f /q "bot.qr.png" >nul 2>&1
 

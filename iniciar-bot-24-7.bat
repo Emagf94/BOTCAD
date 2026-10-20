@@ -78,20 +78,20 @@ echo [INFO] Para detener el bot presiona CTRL + C en esta ventana.
 echo.
 
 :BUCLE_BOT
-:: Liberar puerto 3008 si quedo ocupado por una instancia previa
+:: Liberar puerto 3008 si quedo ocupado por una instancia previa de Node
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3008" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 
-:: Matar procesos fantasma de Chrome que bloquean la sesion (CrashpadMetrics, etc)
-taskkill /F /IM chrome.exe >nul 2>&1
-
-:: Limpiar lockfiles antes de cada arranque (por si acaso)
+:: Limpiar lockfiles antes de cada arranque de forma segura
 if exist "bot_sessions\bot_sessions\lockfile" (
     del /f /q "bot_sessions\bot_sessions\lockfile" >nul 2>&1
 )
 if exist "bot_sessions\bot_sessions\SingletonLock" (
     del /f /q "bot_sessions\bot_sessions\SingletonLock" >nul 2>&1
+)
+if exist "bot_sessions\bot_sessions\DevToolsActivePort" (
+    del /f /q "bot_sessions\bot_sessions\DevToolsActivePort" >nul 2>&1
 )
 
 echo [%DATE% %TIME%] Arrancando proceso del Bot...
@@ -110,6 +110,9 @@ if exist "bot_sessions\bot_sessions\lockfile" (
 )
 if exist "bot_sessions\bot_sessions\SingletonLock" (
     del /f /q "bot_sessions\bot_sessions\SingletonLock" >nul 2>&1
+)
+if exist "bot_sessions\bot_sessions\DevToolsActivePort" (
+    del /f /q "bot_sessions\bot_sessions\DevToolsActivePort" >nul 2>&1
 )
 
 timeout /t 5 /nobreak >nul
