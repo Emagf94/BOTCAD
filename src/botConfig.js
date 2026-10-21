@@ -131,6 +131,72 @@ export const BOT_SETTINGS = {
 };
 
 // ==========================================
+// ASESORES Y ROLES DINÁMICOS
+// ==========================================
+export const BOT_ADVISORS = [
+    {
+        id: 'adv_3135363218',
+        name: 'CAD Principal',
+        phone: '573135363218',
+        lid: '235780886794250',
+        role: 'admin',
+        active: true,
+        receiveSupport: true,
+        receiveOrders: true,
+        canExecuteCommands: true
+    },
+    {
+        id: 'adv_3184849332',
+        name: 'Manuel Asesor',
+        phone: '573184849332',
+        lid: '',
+        role: 'advisor',
+        active: true,
+        receiveSupport: true,
+        receiveOrders: false,
+        canExecuteCommands: true
+    },
+    {
+        id: 'adv_3136303477',
+        name: 'Asesor 3136303477',
+        phone: '573136303477',
+        lid: '',
+        role: 'advisor',
+        active: true,
+        receiveSupport: true,
+        receiveOrders: false,
+        canExecuteCommands: true
+    }
+];
+
+/**
+ * Busca y retorna el nombre configurado del asesor a partir de su JID, teléfono o LID.
+ * @param {string|object} fromOrCtx
+ * @returns {string} Nombre del asesor o fallback limpio
+ */
+export const getAdvisorName = (fromOrCtx) => {
+    if (!fromOrCtx) return 'Asesor';
+    const raw = typeof fromOrCtx === 'string' ? fromOrCtx : (fromOrCtx.from || fromOrCtx.sender?.id || '');
+    const cleanDigits = String(raw).split('@')[0].replace(/\D/g, '');
+
+    if (!cleanDigits) return 'Asesor';
+
+    for (const adv of BOT_ADVISORS) {
+        const advPhone = String(adv.phone || '').replace(/\D/g, '');
+        const advLid = String(adv.lid || '').replace(/\D/g, '');
+
+        if (advLid && (advLid === cleanDigits || cleanDigits.includes(advLid) || advLid.includes(cleanDigits))) {
+            return adv.name || 'Asesor';
+        }
+        if (advPhone && (advPhone === cleanDigits || cleanDigits.endsWith(advPhone) || advPhone.endsWith(cleanDigits))) {
+            return adv.name || 'Asesor';
+        }
+    }
+
+    return cleanDigits.length <= 12 ? cleanDigits : 'Asesor';
+};
+
+// ==========================================
 // NODOS PERSONALIZADOS DINÁMICOS
 // ==========================================
 export const BOT_CUSTOM_NODES = {};
@@ -262,5 +328,47 @@ export const initBotConfig = async () => {
         }
     }, (err) => {
         console.error('Error en listener de custom_nodes Firestore:', err);
+    });
+
+    // 6. Sincronizar Asesores y Permisos Dinámicos
+    const advisorsRef = doc(db, 'config', 'advisors');
+    try {
+        const snap = await getDoc(advisorsRef);
+        if (!snap.exists()) {
+            console.log('📝 Creando documento inicial de asesores en Firestore...');
+            await setDoc(advisorsRef, { list: BOT_ADVISORS });
+        }
+    } catch (err) {
+        console.error('Error comprobando documento de asesores:', err);
+    }
+
+    onSnapshot(advisorsRef, (snapshot) => {
+        if (snapshot.exists()) {
+            const data = snapshot.data();
+            const list = Array.isArray(data?.list) ? data.list : [];
+            BOT_ADVISORS.length = 0;
+            BOT_ADVISORS.push(...list);
+
+            // Recomputar teléfonos de soporte y comandos activos para compatibilidad total
+            const activeSupport = list
+                .filter(a => a.active !== false && a.receiveSupport !== false && a.phone)
+                .map(a => `${String(a.phone).replace(/\D/g, '')}@c.us`);
+
+            const activeEscapes = list
+                .filter(a => a.active !== false && a.canExecuteCommands !== false)
+                .flatMap(a => [String(a.phone || '').replace(/\D/g, ''), String(a.lid || '').replace(/\D/g, '')])
+                .filter(Boolean);
+
+            if (activeSupport.length > 0) {
+                BOT_SETTINGS.adminSupportPhone = activeSupport.join(', ');
+            }
+            if (activeEscapes.length > 0) {
+                BOT_SETTINGS.adminEscapes = Array.from(new Set([...(BOT_SETTINGS.adminEscapes || []), ...activeEscapes]));
+            }
+
+            console.log(`⚡ [SYNC] Asesores actualizados en tiempo real (${list.length} registrados, ${activeSupport.length} activos en soporte).`);
+        }
+    }, (err) => {
+        console.error('Error en listener de asesores Firestore:', err);
     });
 };

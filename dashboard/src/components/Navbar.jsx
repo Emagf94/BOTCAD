@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { 
-  Bot, LogOut, FolderTree, Users,
+  Bot, LogOut, FolderTree, Users, ShieldCheck,
   Menu, ChevronRight 
 } from 'lucide-react';
 
@@ -19,7 +19,8 @@ export default function Navbar({ activeTab, setActiveTab, user }) {
 
   const navItems = [
     { id: 'contacts', label: 'Lista de Contactos', icon: Users, badge: 'Clientes' },
-    { id: 'prices', label: 'Catálogo & Categorías', icon: FolderTree, badge: 'Precios' }
+    { id: 'prices', label: 'Catálogo & Categorías', icon: FolderTree, badge: 'Precios' },
+    { id: 'advisors', label: 'Asesores & Permisos', icon: ShieldCheck, badge: 'Equipo' }
   ];
 
   return (

@@ -5,6 +5,7 @@ import Login from './components/Login';
 import Navbar from './components/Navbar';
 import ContactsTab from './components/ContactsTab';
 import PricesTab from './components/PricesTab';
+import AdvisorsTab from './components/AdvisorsTab';
 import { Bot, RefreshCw } from 'lucide-react';
 
 export default function App() {
@@ -91,6 +92,7 @@ export default function App() {
         <main style={{ flex: 1, overflowX: 'hidden' }}>
           {activeTab === 'contacts' && <ContactsTab />}
           {activeTab === 'prices' && <PricesTab />}
+          {activeTab === 'advisors' && <AdvisorsTab />}
         </main>
       </div>
     </div>

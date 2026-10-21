@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { BOT_SETTINGS, BOT_MEDIA } from '../botConfig.js';
+import { BOT_SETTINGS, BOT_MEDIA, BOT_ADVISORS, getAdvisorName } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
 import {
     getWppClient,
@@ -38,6 +38,12 @@ export const activeBridgeChats = new Map();
  * Cola de espera de clientes que han solicitado soporte con un asesor humano.
  */
 export const pendingSupportQueue = [];
+
+/**
+ * Detalles asociados a cada cliente en cola de soporte (asunto, nombre, teléfono real, etc.).
+ * Relaciona: clientJid -> { asunto, name, phone, timestamp }
+ */
+export const pendingSupportDetails = new Map();
 
 /**
  * Busca de forma flexible si un remitente (asesor o cliente) tiene un chat activo de soporte.
@@ -351,14 +357,12 @@ export const safeSendSticker = async (provider, jid, stickerPath) => {
 };
 
 // ==========================================
-// FUNCIONES DE VALIDACIÓN Y HELPERS
-// ==========================================
-
 /**
- * Verifica si un remitente o contexto de mensaje corresponde a un administrador autorizado.
+ * Verifica si un remitente o contexto de mensaje corresponde a un administrador o asesor autorizado.
+ * Consulta en tiempo real la lista sincronizada de asesores (BOT_ADVISORS) y los escapes de emergencia.
  * Soporta números directos, IDs con sufijo @c.us, y LIDs de WhatsApp (@lid).
  * @param {string|object} fromOrCtx - Identificador del remitente o contexto del mensaje (ctx)
- * @returns {boolean} true si es administrador
+ * @returns {boolean} true si es administrador o asesor con permisos de comandos
  */
 export const isAdmin = (fromOrCtx) => {
     if (!fromOrCtx) return false;
@@ -379,13 +383,38 @@ export const isAdmin = (fromOrCtx) => {
     
     if (candidates.length === 0) return false;
 
+    // Normalizar dígitos de todos los candidatos del remitente
+    const candidateDigits = candidates
+        .map(c => String(c).split('@')[0].replace(/\D/g, ''))
+        .filter(Boolean);
+
+    // 1. Verificación contra la lista sincronizada de asesores (BOT_ADVISORS)
+    if (Array.isArray(BOT_ADVISORS)) {
+        for (const adv of BOT_ADVISORS) {
+            // Verificar si el asesor está activo y tiene permisos de comando habilitados
+            if (adv.active === false || adv.canExecuteCommands === false) continue;
+
+            const advPhone = String(adv.phone || '').replace(/\D/g, '');
+            const advLid = String(adv.lid || '').replace(/\D/g, '');
+
+            for (const cand of candidateDigits) {
+                if (advLid && (cand === advLid || cand.includes(advLid) || advLid.includes(cand))) {
+                    return true;
+                }
+                if (advPhone && (cand === advPhone || cand.endsWith(advPhone) || advPhone.endsWith(cand))) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 2. Respaldo contra escapes y teléfonos en BOT_SETTINGS
     let escapes = BOT_SETTINGS.adminEscapes || [];
     if (!Array.isArray(escapes)) {
         if (typeof escapes === 'string') escapes = escapes.split(',').map(s => s.trim());
         else escapes = [String(escapes)];
     }
 
-    // Extraer también de forma dinámica todos los números de asesores y órdenes configurados (del Dashboard o botConfig)
     const dynamicPhones = [
         ...(typeof BOT_SETTINGS.adminSupportPhone === 'string' ? BOT_SETTINGS.adminSupportPhone.split(',') : []),
         ...(typeof BOT_SETTINGS.adminOrdersPhone === 'string' ? BOT_SETTINGS.adminOrdersPhone.split(',') : [])
@@ -393,7 +422,7 @@ export const isAdmin = (fromOrCtx) => {
         .map(s => s.trim().replace('@c.us', '').replace('@lid', '').replace(/\D/g, ''))
         .filter(Boolean);
     
-    // Lista inmutable de administradores autorizados
+    // Lista segura de respaldo inmutable
     const finalAdmins = [
         ...escapes,
         ...dynamicPhones,
@@ -408,6 +437,69 @@ export const isAdmin = (fromOrCtx) => {
     
     return candidates.some(cand => finalAdmins.some(admin => String(cand).includes(admin)));
 };
+
+/**
+ * Obtiene el nombre y teléfono real formateado de un cliente desde la base de datos o contexto.
+ * Evita mostrar LIDs de WhatsApp (como 100923527413828) y no incluye enlaces wa.me.
+ * @param {string|object} fromOrId JID, teléfono, LID o contexto del cliente
+ * @returns {Promise<{name: string, phone: string}>}
+ */
+export const getCustomerDisplayInfo = async (fromOrId) => {
+    if (!fromOrId) return { name: 'Cliente', phone: '' };
+
+    let raw = '';
+    if (typeof fromOrId === 'string') {
+        raw = fromOrId;
+    } else if (typeof fromOrId === 'object') {
+        raw = fromOrId.from || fromOrId.sender?.id || fromOrId.author || '';
+    }
+
+    const rawId = String(raw).split('@')[0].trim();
+    const cleanDigits = rawId.replace(/\D/g, '');
+
+    let dbName = '';
+    let dbPhone = '';
+
+    // 1. Intentar consultar en Firestore con el ID exacto
+    try {
+        let userDoc = await getUser(rawId);
+        if (!userDoc && cleanDigits && cleanDigits !== rawId) {
+            userDoc = await getUser(cleanDigits);
+        }
+        // Si tiene prefijo 57 de 12 dígitos, intentar también sin el 57
+        if (!userDoc && cleanDigits.startsWith('57') && cleanDigits.length === 12) {
+            userDoc = await getUser(cleanDigits.substring(2));
+        }
+
+        if (userDoc) {
+            if (userDoc.name) dbName = String(userDoc.name).trim();
+            if (userDoc.contactUser) dbPhone = String(userDoc.contactUser).trim();
+            else if (userDoc.phone && String(userDoc.phone).replace(/\D/g, '').length <= 12) {
+                dbPhone = String(userDoc.phone).trim();
+            }
+        }
+    } catch (e) {
+        console.warn(`⚠️ [getCustomerDisplayInfo] Error al consultar usuario para ${rawId}:`, e.message);
+    }
+
+    // 2. Determinar el teléfono limpio a mostrar
+    let finalPhone = dbPhone;
+    if (!finalPhone) {
+        if (cleanDigits.length <= 12 && cleanDigits.length >= 7) {
+            finalPhone = cleanDigits;
+        } else {
+            // Si es un LID largo y no hay contactUser en DB, mostrar el ID limpio
+            finalPhone = rawId;
+        }
+    }
+
+    return {
+        name: dbName || 'Cliente',
+        phone: finalPhone
+    };
+};
+
+export { getAdvisorName };
 
 /**
  * Valida si la hora actual está dentro del horario laboral de atención de asesores.
