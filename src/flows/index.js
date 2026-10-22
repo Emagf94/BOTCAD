@@ -25,7 +25,8 @@ import {
     flowPagosFAQ,
     flowFAQ,
     flowEnvioDirectoArchivosLoop,
-    flowEnvioDirectoArchivos
+    flowEnvioDirectoArchivos,
+    flowEnvioDirectoComentario
 } from './faq.flow.js';
 
 import {
@@ -120,7 +121,8 @@ export const allFlows = [
     flowAdminInitiatedClientBridge,
     flowCarteleraMaterial,
     flowEnvioDirectoArchivos,
-    flowEnvioDirectoArchivosLoop
+    flowEnvioDirectoArchivosLoop,
+    flowEnvioDirectoComentario
 ];
 
 export default allFlows;
@@ -144,6 +146,7 @@ export {
     flowFAQ,
     flowEnvioDirectoArchivosLoop,
     flowEnvioDirectoArchivos,
+    flowEnvioDirectoComentario,
     flowCarteleraMaterial,
     flowMenuCarteleras,
     flowPlanosColor,

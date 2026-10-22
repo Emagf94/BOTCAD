@@ -12,7 +12,7 @@ import {
     safeSendPaymentMedia
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
-import { flowCancelar, flowInactividad } from './main.flow.js';
+import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
 
 // ==========================================
 // FLUJOS FAQ (PREGUNTAS FRECUENTES)
@@ -162,31 +162,11 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         if (texto === '1') {
             const userFiles = globalFilesCache.get(ctx.from + '_directo') || [];
             if (userFiles.length === 0) {
-                await flowDynamic('⚠️ No has enviado archivos ni enlaces. Adjúntalos o escribe 0 para cancelar.');
+                await flowDynamic('⚠️ No has enviado archivos ni enlaces. Adjúntalos o escribe *0* para cancelar.');
                 return gotoFlow(flowEnvioDirectoArchivosLoop);
             }
             
-            await flowDynamic('⌛ Enviando tus archivos y enlaces al administrador, por favor espera un momento...');
-            
-            const phoneId = ctx.from.split('@')[0];
-            const userDb = await getUser(phoneId);
-            const name = state.getMyState()?.userName || userDb?.name || 'Cliente';
-            const contact = userDb?.contactUser || phoneId;
-            
-            const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573135363218@c.us';
-
-            // Entrega multietapa a todos los administradores (envío directo + enlaces + .ZIP consolidado + fallback)
-            await deliverFilePackageToAdmin(provider, userFiles, {
-                name,
-                contact,
-                title: 'PAQUETE DE ARCHIVOS Y ENLACES DIRECTOS RECIBIDO'
-            }, adminPhonesConfig);
-            
-            globalFilesCache.delete(ctx.from + '_directo');
-            
-            await new Promise(r => setTimeout(r, 1000));
-            await flowDynamic('✅ ¡Paquete enviado exitosamente al administrador!\n¿Deseas algo más? (Escribe "hola" para volver al menú principal)');
-            return;
+            return gotoFlow(flowEnvioDirectoComentario);
         }
 
         const userFilesFallback = globalFilesCache.get(ctx.from + '_directo') || [];
@@ -198,6 +178,74 @@ export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
         }
         return gotoFlow(flowEnvioDirectoArchivosLoop);
     });
+
+export const flowEnvioDirectoComentario = addKeyword(EVENTS.ACTION)
+    .addAnswer(
+        [
+            '📝 *Instrucciones o Comentarios del Pedido*',
+            '',
+            '¿Deseas agregar alguna instrucción o nota especial para el asesor?',
+            '_(Por ejemplo: tipo de papel, cantidad, acabados, observaciones)_',
+            '',
+            '👉 *Escribe tu instrucción por aquí*, o escribe *1* si no tienes comentarios y deseas enviar ya.',
+            '',
+            '🛑 *0.* Cancelar y volver al menú principal'
+        ].join('\n'),
+        { capture: true, delay: 1000, idle: 600000 },
+        async (ctx, { state, gotoFlow, flowDynamic, provider }) => {
+            if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
+                console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
+                if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
+                return gotoFlow(flowAdminBridgeLoop);
+            }
+            if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
+
+            const rawBody = (ctx.body || '').trim();
+            const lowerBody = rawBody.toLowerCase();
+
+            if (['0', 'menu', 'menú', 'volver', 'cancelar'].includes(lowerBody)) {
+                return gotoFlow(flowCancelar);
+            }
+
+            let customerComment = '';
+            if (rawBody !== '1' && lowerBody !== 'omitir' && lowerBody !== 'no' && lowerBody !== 'ninguno') {
+                customerComment = rawBody;
+            }
+
+            const userFiles = globalFilesCache.get(ctx.from + '_directo') || [];
+            if (userFiles.length === 0) {
+                await flowDynamic('⚠️ No se encontraron archivos registrados. Volviendo al menú de envío.');
+                return gotoFlow(flowEnvioDirectoArchivos);
+            }
+
+            await flowDynamic('⌛ Enviando tus archivos y comentarios al administrador, por favor espera un momento...');
+
+            const phoneId = ctx.from.split('@')[0];
+            const userDb = await getUser(phoneId);
+            const name = state.getMyState()?.userName || userDb?.name || 'Cliente';
+            const contact = userDb?.contactUser || phoneId;
+            const adminPhonesConfig = BOT_SETTINGS.adminOrdersPhone || '573135363218@c.us';
+
+            // Entrega multietapa a todos los administradores (archivos + comentarios + enlaces + .ZIP consolidado)
+            await deliverFilePackageToAdmin(provider, userFiles, {
+                name,
+                contact,
+                title: 'PAQUETE DE ARCHIVOS Y ENLACES DIRECTOS RECIBIDO',
+                instruction: customerComment,
+                comment: customerComment
+            }, adminPhonesConfig);
+
+            globalFilesCache.delete(ctx.from + '_directo');
+            await state.update({ archivos: [], archivosConfig: [], currentFileIndex: 0 });
+
+            await new Promise(r => setTimeout(r, 1200));
+            await flowDynamic('✅ ¡Paquete e instrucciones enviadas exitosamente al administrador! 🎉\nUn asesor las revisará en breve.');
+
+            // Retorno limpio al menú principal para que el usuario no quede atrapado
+            await new Promise(r => setTimeout(r, 1500));
+            return gotoFlow(flowMainMenu);
+        }
+    );
 
 export const flowEnvioDirectoArchivos = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { flowDynamic, gotoFlow }) => {

@@ -910,17 +910,78 @@ export const deliverFileToRecipient = async (provider, recipientJid, fileItem, c
 };
 
 /**
+ * Envía un archivo comprimido .ZIP a un destinatario utilizando la cascada de transporte.
+ * @param {object} provider 
+ * @param {string} recipientJid 
+ * @param {string} zipPath 
+ * @param {string} zipDisplayName 
+ * @param {string} caption 
+ * @returns {Promise<boolean>}
+ */
+export const sendZipFileToRecipient = async (provider, recipientJid, zipPath, zipDisplayName, caption) => {
+    const client = await getWppClient(provider);
+    let sent = false;
+
+    if (client && typeof client.sendFile === 'function') {
+        try {
+            await client.sendFile(recipientJid, zipPath, zipDisplayName, caption);
+            sent = true;
+            console.log(`✅ [FileHandler] ZIP consolidado enviado vía client.sendFile (posicional) a ${recipientJid}`);
+        } catch (e1) {
+            try {
+                await client.sendFile(recipientJid, zipPath, {
+                    filename: zipDisplayName,
+                    caption: caption,
+                    waitForAck: false
+                });
+                sent = true;
+                console.log(`✅ [FileHandler] ZIP consolidado enviado vía client.sendFile (options) a ${recipientJid}`);
+            } catch (e2) {}
+        }
+    }
+
+    if (!sent && provider && typeof provider.sendMessage === 'function') {
+        try {
+            await provider.sendMessage(recipientJid, caption, { media: zipPath });
+            sent = true;
+            console.log(`✅ [FileHandler] ZIP consolidado enviado vía provider.sendMessage a ${recipientJid}`);
+        } catch (e3) {}
+    }
+
+    if (!sent && provider && typeof provider.sendMedia === 'function') {
+        try {
+            await provider.sendMedia(recipientJid, zipPath, caption);
+            sent = true;
+            console.log(`✅ [FileHandler] ZIP consolidado enviado vía provider.sendMedia a ${recipientJid}`);
+        } catch (e4) {}
+    }
+
+    return sent;
+};
+
+/**
  * Entrega un paquete completo de archivos de un cliente a todos los administradores configurados.
- * Si hay múltiples archivos o archivos CAD, opcionalmente envía también un paquete consolidado en .ZIP.
+ * Si hay múltiples archivos o archivos CAD, envía también un paquete consolidado en .ZIP.
+ * Incluye instrucciones o comentarios del cliente de manera destacada.
  * @param {object} provider 
  * @param {Array<object|string>} userFiles 
  * @param {object} customerInfo 
  * @param {string|Array<string>} adminPhonesConfig 
  */
 export const deliverFilePackageToAdmin = async (provider, userFiles, customerInfo = {}, adminPhonesConfig = null) => {
-    // Los paquetes de archivos directos van EXCLUSIVAMENTE al WhatsApp de impresión/producción 3135363218
-    const adminJid = PRODUCTION_FILES_JID;
-    const { name = 'Cliente', contact = 'Sin especificar', title = 'PAQUETE DE ARCHIVOS DIRECTOS RECIBIDO' } = customerInfo;
+    const { 
+        name = 'Cliente', 
+        contact = 'Sin especificar', 
+        title = 'PAQUETE DE ARCHIVOS Y ENLACES DIRECTOS RECIBIDO',
+        instruction = '',
+        comment = ''
+    } = customerInfo;
+
+    const clientComment = (instruction || comment || '').trim();
+
+    // Resolver lista de administradores destinatarios asegurando siempre el número principal 3135363218
+    const rawAdmins = normalizeAdminJids(adminPhonesConfig || PRODUCTION_FILES_JID);
+    const targetAdmins = [...new Set([PRODUCTION_FILES_JID, ...rawAdmins])];
 
     const fileCount = userFiles.filter(item => {
         const isL = (typeof item === 'object' && item.isLink) || 
@@ -937,33 +998,41 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
         itemsDetail += ` (${linkCount} enlace(s) en la nube)`;
     }
 
+    let commentSection = '';
+    if (clientComment) {
+        commentSection = `\n📝 *Instrucción / Comentario del Cliente:*\n"${clientComment}"\n`;
+    }
+
     const summaryMsg = `📂 *${title}*\n` +
                        `👤 *Cliente:* ${name}\n` +
                        `📱 *Contacto:* ${contact}\n` +
+                       commentSection +
                        `${itemsDetail}\n` +
                        `🕒 *Fecha:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`;
 
-    try {
-        await provider.sendMessage(adminJid, summaryMsg, {});
-    } catch (e) {
-        console.error(`Error enviando resumen a ${adminJid}:`, e);
-    }
+    for (const adminJid of targetAdmins) {
+        try {
+            await provider.sendMessage(adminJid, summaryMsg, {});
+        } catch (e) {
+            console.error(`Error enviando resumen a ${adminJid}:`, e);
+        }
 
-    // Enviar cada archivo o enlace individualmente
-    for (let i = 0; i < userFiles.length; i++) {
-        const item = userFiles[i];
-        const isLink = (typeof item === 'object' && item.isLink) || 
-                       (typeof item === 'string' && item.startsWith('LINK:')) ||
-                       (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
-        const originalName = typeof item === 'object' ? item.originalName : path.basename(item);
-        const caption = isLink 
-            ? `🔗 *Enlace ${i + 1} de ${userFiles.length}:*` 
-            : `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
-        await deliverFileToRecipient(provider, adminJid, item, caption);
+        // Enviar cada archivo o enlace individualmente
+        for (let i = 0; i < userFiles.length; i++) {
+            const item = userFiles[i];
+            const isLink = (typeof item === 'object' && item.isLink) || 
+                           (typeof item === 'string' && item.startsWith('LINK:')) ||
+                           (typeof item === 'object' && typeof item.filePath === 'string' && item.filePath.startsWith('LINK:'));
+            const originalName = typeof item === 'object' ? item.originalName : path.basename(item);
+            const caption = isLink 
+                ? `🔗 *Enlace ${i + 1} de ${userFiles.length}:*` 
+                : `📄 *Archivo ${i + 1} de ${userFiles.length}:* ${originalName}`;
+            await deliverFileToRecipient(provider, adminJid, item, caption);
+        }
     }
 
     // Si son múltiples archivos (más de 1) y hay al menos 1 archivo físico,
-    // generar un paquete consolidado Paquete_Archivos_[Cliente].zip
+    // generar un paquete consolidado Paquete_Archivos_[Cliente].zip y enviarlo a todos los destinatarios
     const physicalFiles = userFiles.filter(item => {
         const p = typeof item === 'object' ? item.filePath : item;
         return p && fs.existsSync(p) && !p.startsWith('LINK:');
@@ -971,8 +1040,11 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
 
     if (physicalFiles.length > 1) {
         try {
+            const zipsDir = path.resolve('./downloads/zips');
+            fs.mkdirSync(zipsDir, { recursive: true });
             const safeName = name.replace(/[^a-zA-Z0-9]/g, '_');
-            const bundleZipPath = path.join(os.tmpdir(), `Paquete_Archivos_${safeName}_${Date.now()}.zip`);
+            const bundleZipPath = path.join(zipsDir, `Paquete_Archivos_${safeName}_${Date.now()}.zip`);
+            const zipDisplayName = `Archivos_${safeName}.zip`;
             const filesToZip = physicalFiles.map(item => ({
                 path: typeof item === 'object' ? item.filePath : item,
                 name: typeof item === 'object' ? item.originalName : path.basename(item)
@@ -980,42 +1052,69 @@ export const deliverFilePackageToAdmin = async (provider, userFiles, customerInf
 
             createZipArchive(filesToZip, bundleZipPath);
             const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP*\nContiene todos los ${physicalFiles.length} archivos de *${name}* en un solo paquete descargable.`;
-            const client = await getWppClient(provider);
-            
-            let zipBundleSent = false;
-            if (client && typeof client.sendFile === 'function') {
-                try {
-                    await client.sendFile(adminJid, bundleZipPath, `Archivos_${safeName}.zip`, bundleCaption);
-                    zipBundleSent = true;
-                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (posicional) a ${adminJid}`);
-                } catch (eZipB1) {
-                    try {
-                        await client.sendFile(adminJid, bundleZipPath, {
-                            filename: `Archivos_${safeName}.zip`,
-                            caption: bundleCaption,
-                            waitForAck: false
-                        });
-                        zipBundleSent = true;
-                        console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía client.sendFile (options) a ${adminJid}`);
-                    } catch (eZipB2) {}
-                }
-            }
-            if (!zipBundleSent && provider && typeof provider.sendMessage === 'function') {
-                try {
-                    await provider.sendMessage(adminJid, bundleCaption, { media: bundleZipPath });
-                    zipBundleSent = true;
-                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía provider.sendMessage a ${adminJid}`);
-                } catch (eZipB3) {}
-            }
-            if (!zipBundleSent && provider && typeof provider.sendMedia === 'function') {
-                try {
-                    await provider.sendMedia(adminJid, bundleZipPath, bundleCaption);
-                    zipBundleSent = true;
-                    console.log(`✅ [FileHandler] Envío paquete ZIP exitoso vía provider.sendMedia a ${adminJid}`);
-                } catch (eZipB4) {}
+
+            for (const adminJid of targetAdmins) {
+                await sendZipFileToRecipient(provider, adminJid, bundleZipPath, zipDisplayName, bundleCaption);
             }
         } catch (errBundle) {
             console.error("Error creando paquete ZIP consolidado:", errBundle);
+        }
+    }
+};
+
+/**
+ * Entrega los archivos de un pedido (en efectivo o transferencia) al destinatario,
+ * enviando cada archivo individualmente y, si son más de 1, enviando además un paquete consolidado .ZIP.
+ * @param {object} provider
+ * @param {string} recipientJid
+ * @param {Array<string|object>} archivos
+ * @param {Array<object>} archivosConfig
+ * @param {string} customerName
+ */
+export const deliverOrderFilesWithZip = async (provider, recipientJid, archivos = [], archivosConfig = [], customerName = 'Cliente') => {
+    const physicalFiles = [];
+
+    for (let i = 0; i < archivos.length; i++) {
+        let pathItem = archivos[i];
+        if (typeof pathItem === 'string' && !pathItem.startsWith('MSG_ID:') && !pathItem.startsWith('LINK:')) {
+            pathItem = path.resolve(pathItem);
+        } else if (typeof pathItem === 'object' && pathItem.filePath && !pathItem.filePath.startsWith('MSG_ID:') && !pathItem.filePath.startsWith('LINK:')) {
+            pathItem = { ...pathItem, filePath: path.resolve(pathItem.filePath) };
+        }
+
+        const conf = (archivosConfig && archivosConfig[i]) ? archivosConfig[i] : { copies: 1, pages: 1 };
+        const caption = `📄 Archivo ${i + 1} de ${archivos.length}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
+        
+        try {
+            await deliverFileToRecipient(provider, recipientJid, pathItem, caption);
+        } catch (errDeliver) {
+            console.error(`Error entregando archivo ${i + 1} a ${recipientJid}:`, errDeliver);
+        }
+
+        const rawPath = typeof pathItem === 'object' ? pathItem.filePath : pathItem;
+        if (rawPath && fs.existsSync(rawPath) && !rawPath.startsWith('LINK:')) {
+            physicalFiles.push({
+                path: rawPath,
+                name: typeof pathItem === 'object' ? (pathItem.originalName || path.basename(rawPath)) : path.basename(rawPath)
+            });
+        }
+    }
+
+    // Si son más de 1 archivo físico, enviar paquete consolidado .ZIP
+    if (physicalFiles.length > 1) {
+        try {
+            const zipsDir = path.resolve('./downloads/zips');
+            fs.mkdirSync(zipsDir, { recursive: true });
+            const safeName = customerName.replace(/[^a-zA-Z0-9]/g, '_');
+            const bundleZipPath = path.join(zipsDir, `Pedido_${safeName}_${Date.now()}.zip`);
+            const zipDisplayName = `Pedido_${safeName}.zip`;
+
+            createZipArchive(physicalFiles, bundleZipPath);
+            const bundleCaption = `🗂️ *PAQUETE CONSOLIDADO .ZIP DEL PEDIDO*\nContiene los ${physicalFiles.length} archivos de *${customerName}* comprimidos en un solo paquete descargable.`;
+
+            await sendZipFileToRecipient(provider, recipientJid, bundleZipPath, zipDisplayName, bundleCaption);
+        } catch (errZipOrder) {
+            console.error("Error creando o enviando ZIP consolidado de pedido:", errZipOrder);
         }
     }
 };

@@ -66,7 +66,7 @@ const EXCLUDED_FROM_BACKUP = new Set([
 // Configuración de intervalos del Guardián
 const HEARTBEAT_INTERVAL_MS = 45 * 1000;      // Latido Zero-Idle cada 45 segundos
 const BACKUP_INTERVAL_MS = 10 * 60 * 1000;     // Backup periódico cada 10 minutos
-const MAX_CONSECUTIVE_HEARTBEAT_FAILS = 5;     // 5 fallos (~3.75 min) antes de reiniciar
+const MAX_CONSECUTIVE_HEARTBEAT_FAILS = 10;    // 10 fallos (~7.5 min) antes de considerar reinicio limpio
 
 // Variables de estado interno
 let heartbeatIntervalId = null;
@@ -338,12 +338,22 @@ export function getGuardianProviderOptions(isHeadless = false) {
         '--disable-gpu',
         '--disable-session-crashed-bubble',
         '--disable-infobars',
+        // Anti-Detección Bot / Stealth: Impide que WhatsApp detecte automatización y cierre la sesión
+        '--disable-blink-features=AutomationControlled',
+        '--no-default-browser-check',
+        '--disable-site-isolation-trials',
+        '--no-experiments',
+        '--ignore-gpu-blacklist',
+        '--ignore-certificate-errors',
+        '--ignore-certificate-errors-spki-list',
+        '--disable-extensions',
+        '--disable-default-apps',
+        '--enable-features=NetworkService',
         // Anti-Throttling 24/7: Evita que Windows y Chrome bajen la prioridad de timers y WebSockets
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
         '--disable-features=CalculateNativeWinOcclusion',
-        '--disable-features=IsolateOrigins,site-per-process',
         '--disable-breakpad',
         '--disable-hang-monitor',
         '--disable-ipc-flooding-protection',
@@ -366,8 +376,27 @@ export function getGuardianProviderOptions(isHeadless = false) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Reactivación suave y no destructiva de la conexión de WhatsApp Web.
+ * Jamás recarga la página (evita perder tokens / volver al QR).
+ */
+async function triggerGentleKeepAlive(client) {
+    if (!client || !client.page || client.page.isClosed()) return;
+    try {
+        await client.page.evaluate(() => {
+            try {
+                if (window.WPP?.conn?.setKeepAlive) window.WPP.conn.setKeepAlive(true);
+                if (window.WPP?.whatsapp?.Socket?.poke) window.WPP.whatsapp.Socket.poke();
+            } catch { /* ignorar */ }
+        });
+        console.log(`💓 [GUARDIAN] Latido suave enviado a WhatsApp Web.`);
+    } catch (e) {
+        console.warn(`⚠️ [GUARDIAN] Fallo menor en latido suave: ${e.message}`);
+    }
+}
+
+/**
  * Manejador inteligente de cambios de estado de Socket de WhatsApp.
- * Tolera caídas transitorias de red sin matar el proceso.
+ * Tolera caídas transitorias de red sin matar el proceso ni recargar la página.
  */
 function handleStateChange(state, client) {
     console.log(`📡 [GUARDIAN] Cambio de estado de conexión: ${state}`);
@@ -378,17 +407,11 @@ function handleStateChange(state, client) {
         return;
     }
 
-    // Estados transitorios normales en micro-cortes o reconexiones de red
-    const transientStates = ['TIMEOUT', 'DISCONNECTED', 'PAIRING', 'OPENING', 'RESUMING', 'SYNCING'];
+    // Estados transitorios normales en micro-cortes, reposo o reconexiones de red
+    const transientStates = ['TIMEOUT', 'DISCONNECTED', 'PAIRING', 'OPENING', 'RESUMING', 'SYNCING', 'UNPAIRED_IDLE'];
     if (transientStates.includes(state)) {
-        console.warn(`🟡 [GUARDIAN] Estado de red transitorio (${state}). WhatsApp Web se está auto-reanudando...`);
-        return;
-    }
-
-    // Estado UNPAIRED_IDLE por inactividad prolongada
-    if (state === 'UNPAIRED_IDLE') {
-        console.warn(`⚠️ [GUARDIAN] Estado UNPAIRED_IDLE detectado por inactividad. Disparando reactivación suave de sesión...`);
-        triggerSoftRecovery(client);
+        console.warn(`🟡 [GUARDIAN] Estado de red transitorio (${state}). WhatsApp Web se está auto-reanudando pasivamente...`);
+        triggerGentleKeepAlive(client);
         return;
     }
 
@@ -415,20 +438,6 @@ function handleStateChange(state, client) {
 }
 
 /**
- * Intenta una reactivación suave de la página de WhatsApp Web sin reiniciar Node.js.
- */
-async function triggerSoftRecovery(client) {
-    if (!client || !client.page || client.page.isClosed()) return;
-    try {
-        console.log(`🔄 [GUARDIAN] Ejecutando recarga suave de la página de WhatsApp Web...`);
-        await client.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        console.log(`✅ [GUARDIAN] Recarga suave completada.`);
-    } catch (e) {
-        console.warn(`⚠️ [GUARDIAN] Error en recarga suave: ${e.message}`);
-    }
-}
-
-/**
  * Inicia el Latido Proactivo "Zero-Idle" cada 45 segundos.
  * Realiza una micro-evaluación en la página de Chromium para mantener caliente el WebSocket
  * y activo el hilo de ejecución de JavaScript, evitando suspensiones por falta de interacción.
@@ -442,16 +451,21 @@ function startZeroIdleHeartbeat(client) {
         }
 
         try {
-            // Micro-evaluación rápida en el contexto del navegador (<10ms)
-            const status = await Promise.race([
+            // Micro-evaluación segura en el contexto del navegador (<10ms)
+            await Promise.race([
                 client.page.evaluate(() => {
-                    return {
-                        isOnline: window.WPP?.conn?.isOnline?.() ?? (window.WAPI?.isConnected?.() ?? true),
-                        state: window.WPP?.whatsapp?.Socket?.state ?? 'UNKNOWN',
-                        stream: window.WPP?.whatsapp?.Socket?.stream ?? 'UNKNOWN'
-                    };
+                    try {
+                        if (window.WPP?.conn?.setKeepAlive) window.WPP.conn.setKeepAlive(true);
+                        return {
+                            isOnline: window.WPP?.conn?.isOnline?.() ?? (window.WAPI?.isConnected?.() ?? true),
+                            state: window.WPP?.whatsapp?.Socket?.state ?? 'UNKNOWN',
+                            stream: window.WPP?.whatsapp?.Socket?.stream ?? 'UNKNOWN'
+                        };
+                    } catch {
+                        return { isOnline: true };
+                    }
                 }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido (12s)')), 12000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido (25s)')), 25000))
             ]);
 
             // Si responde, el hilo de Chromium está 100% activo y vivo
@@ -461,10 +475,10 @@ function startZeroIdleHeartbeat(client) {
             console.warn(`⚠️ [GUARDIAN] Latido #${consecutivePingFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILS} sin respuesta: ${err.message}`);
 
             if (consecutivePingFailures === 3) {
-                console.log(`🔄 [GUARDIAN] 3 latidos fallidos. Intentando auto-recuperación suave de página...`);
-                triggerSoftRecovery(client);
+                console.log(`🔄 [GUARDIAN] 3 latidos fallidos. Enviando señal suave de reactivación...`);
+                triggerGentleKeepAlive(client);
             } else if (consecutivePingFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILS) {
-                console.error(`🛑 [GUARDIAN] ${MAX_CONSECUTIVE_HEARTBEAT_FAILS} latidos fallidos consecutivos (>3.5 minutos sin respuesta del navegador).`);
+                console.error(`🛑 [GUARDIAN] ${MAX_CONSECUTIVE_HEARTBEAT_FAILS} latidos fallidos consecutivos (>7.5 minutos sin respuesta del navegador).`);
                 console.error(`🛑 [GUARDIAN] Ejecutando cierre ordenado para reinicio limpio del proceso...`);
                 gracefulShutdown('HEARTBEAT_TIMEOUT');
             }

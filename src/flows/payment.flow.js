@@ -1,7 +1,7 @@
 import path from 'path';
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS, BOT_MESSAGES, BOT_MEDIA } from '../botConfig.js';
-import { isAdmin, deliverFileToRecipient, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia, safeSendSticker, getWppClient } from '../utils/helpers.js';
+import { isAdmin, deliverFileToRecipient, deliverOrderFilesWithZip, downloadAndSaveIncomingFile, normalizeAdminJids, PRODUCTION_FILES_JID, safeSendPaymentMedia, safeSendSticker, getWppClient } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 
@@ -76,21 +76,8 @@ export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
             console.error("Error enviando mensaje resumen al admin de órdenes:", err);
         }
 
-        for (let i = 0; i < (data.archivos || []).length; i++) {
-            let pathItem = data.archivos[i];
-            if (typeof pathItem === 'string' && !pathItem.startsWith('MSG_ID:') && !pathItem.startsWith('LINK:')) {
-                pathItem = path.resolve(pathItem);
-            } else if (typeof pathItem === 'object' && pathItem.filePath && !pathItem.filePath.startsWith('MSG_ID:') && !pathItem.filePath.startsWith('LINK:')) {
-                pathItem = { ...pathItem, filePath: path.resolve(pathItem.filePath) };
-            }
-            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            try {
-                await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
-            } catch (errDeliver) {
-                console.error(`Error entregando archivo ${i+1} al admin de órdenes:`, errDeliver);
-            }
-        }
+        // Entregar archivos individuales y paquete .ZIP consolidado si son múltiples archivos
+        await deliverOrderFilesWithZip(provider, adminOrderJid, data.archivos || [], data.archivosConfig || [], data.nombrePedido || 'Cliente');
         
         if (comprobantePath) {
             const resolvedCompPath = comprobantePath.startsWith('MSG_ID:') ? comprobantePath : path.resolve(comprobantePath);
@@ -157,21 +144,8 @@ export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
             console.error("Error enviando mensaje resumen en efectivo:", err);
         }
 
-        for (let i = 0; i < (data.archivos || []).length; i++) {
-            let pathItem = data.archivos[i];
-            if (typeof pathItem === 'string' && !pathItem.startsWith('MSG_ID:') && !pathItem.startsWith('LINK:')) {
-                pathItem = path.resolve(pathItem);
-            } else if (typeof pathItem === 'object' && pathItem.filePath && !pathItem.filePath.startsWith('MSG_ID:') && !pathItem.filePath.startsWith('LINK:')) {
-                pathItem = { ...pathItem, filePath: path.resolve(pathItem.filePath) };
-            }
-            const conf = (data.archivosConfig && data.archivosConfig[i]) ? data.archivosConfig[i] : { copies: 1, pages: 1 };
-            const caption = `📄 Archivo ${i+1}\n🖨️ Imprimir: *${conf.copies} copia(s)*\n📄 Páginas: ${conf.pages}`;
-            try {
-                await deliverFileToRecipient(provider, adminOrderJid, pathItem, caption);
-            } catch (errDeliver) {
-                console.error(`Error entregando archivo ${i+1} en efectivo al admin:`, errDeliver);
-            }
-        }
+        // Entregar archivos individuales y paquete .ZIP consolidado si son múltiples archivos
+        await deliverOrderFilesWithZip(provider, adminOrderJid, data.archivos || [], data.archivosConfig || [], data.nombrePedido || 'Cliente');
 
         await new Promise(r => setTimeout(r, 1500));
         await flowDynamic(BOT_MESSAGES.pagoEfectivo || '🏢 Has elegido pago en *Efectivo*.\n⚠️ Recuerda que debes acercarte a nuestro local para realizar el pago, y *solo en ese momento se iniciará la impresión*.\n¡Te esperamos en CAD Impresiones!');
