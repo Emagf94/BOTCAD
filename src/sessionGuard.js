@@ -421,18 +421,45 @@ function handleStateChange(state, client) {
         return;
     }
 
-    // Estado UNPAIRED definitivo
+    // Estado UNPAIRED definitivo - Verificación en 3 etapas con mayor tolerancia
     if (state === 'UNPAIRED') {
         console.warn(`⚠️ [GUARDIAN] Reporte de UNPAIRED. Verificando autenticación real antes de tomar acción...`);
+        
+        // Etapa 1: Esperar 5s y verificar
         setTimeout(async () => {
             try {
-                const authenticated = await client.isLoggedIn().catch(() => false);
-                if (authenticated) {
-                    console.log(`🟢 [GUARDIAN] Falsa alarma de UNPAIRED; la sesión sigue autenticada.`);
-                } else {
-                    console.error(`🛑 [GUARDIAN] Sesión desvinculada definitivamente desde el dispositivo.`);
+                const authenticated1 = await Promise.race([
+                    client.isLoggedIn().catch(() => null),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+                ]);
+                if (authenticated1 === true) {
+                    console.log(`🟢 [GUARDIAN] Falsa alarma de UNPAIRED (etapa 1); la sesión sigue autenticada.`);
+                    triggerGentleKeepAlive(client);
+                    return;
                 }
-            } catch { /* ignorar */ }
+                
+                // Etapa 2: Enviar señal de reactivación y esperar 10s más
+                console.warn(`⚠️ [GUARDIAN] UNPAIRED etapa 1 no confirmó sesión. Reactivando y esperando...`);
+                triggerGentleKeepAlive(client);
+                
+                setTimeout(async () => {
+                    try {
+                        const authenticated2 = await Promise.race([
+                            client.isLoggedIn().catch(() => null),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+                        ]);
+                        if (authenticated2 === true || authenticated2 === null) {
+                            console.log(`🟢 [GUARDIAN] UNPAIRED etapa 2: Sesión recuperada o en estado indeterminado. Manteniendo.`);
+                            return;
+                        }
+                        console.error(`🛑 [GUARDIAN] Sesión desvinculada definitivamente desde el dispositivo después de verificación exhaustiva.`);
+                    } catch {
+                        console.warn(`⚠️ [GUARDIAN] UNPAIRED etapa 2: No se pudo verificar, manteniendo sesión activa como precaución.`);
+                    }
+                }, 10000);
+            } catch {
+                console.warn(`⚠️ [GUARDIAN] Error en verificación UNPAIRED. Manteniendo sesión activa como precaución.`);
+            }
         }, 5000);
     }
 }
@@ -705,10 +732,50 @@ export function initSessionGuard(provider) {
     installFileSystemArmor();
 
     // 2. Interceptar auth_failure de BuilderBot
-    // Bloquea el comportamiento por defecto de BuilderBot que intenta borrar tokens
-    provider.on('auth_failure', (payload) => {
-        console.error(`💥 [SessionGuardian] Evento auth_failure detectado: ${JSON.stringify(payload)}`);
+    // Bloquea el comportamiento por defecto de BuilderBot que intenta borrar tokens.
+    // CRÍTICO: Verifica si el error es realmente de WhatsApp o si es de Firebase/Firestore
+    // (los errores gRPC de Firestore a veces se propagan incorrectamente como auth_failure).
+    provider.on('auth_failure', async (payload) => {
+        const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload || '');
+        console.error(`💥 [SessionGuardian] Evento auth_failure detectado: ${payloadStr}`);
+
+        // Detectar si el error es de Firebase/Firestore (NO de WhatsApp)
+        const isFirebaseError = payloadStr.includes('firestore') ||
+            payloadStr.includes('firebase') ||
+            payloadStr.includes('GrpcConnection') ||
+            payloadStr.includes('UNAVAILABLE') ||
+            payloadStr.includes('2800:3f0:') ||
+            payloadStr.includes('googleapis.com') ||
+            payloadStr.includes('Listen') ||
+            payloadStr.includes('grpc');
+
+        if (isFirebaseError) {
+            console.warn(`🛡️ [SessionGuardian] Error de Firebase/Firestore detectado como auth_failure falso positivo.`);
+            console.warn(`🛡️ [SessionGuardian] La sesión de WhatsApp NO está comprometida. Ignorando.`);
+            return;
+        }
+
         console.warn(`🛑 [SessionGuardian] Armadura FS activa: Se impidió el borrado de bot_sessions.`);
+
+        // Verificar si WhatsApp realmente perdió autenticación
+        try {
+            const client = activeClient || await getWppClient(provider);
+            if (client && client.page && !client.page.isClosed()) {
+                const isLoggedIn = await Promise.race([
+                    client.isLoggedIn().catch(() => null),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+                ]);
+                if (isLoggedIn === true || isLoggedIn === null) {
+                    console.log(`🟢 [SessionGuardian] Verificación post-auth_failure: WhatsApp sigue autenticado. Falsa alarma.`);
+                    triggerGentleKeepAlive(client);
+                    return;
+                }
+            }
+        } catch (verifyErr) {
+            console.warn(`⚠️ [SessionGuardian] No se pudo verificar estado de WhatsApp post-auth_failure: ${verifyErr.message}`);
+        }
+
+        console.error(`🛑 [SessionGuardian] auth_failure REAL confirmado. La sesión podría necesitar re-vinculación QR.`);
     });
 
     // 3. Vincular al evento 'ready' del proveedor
@@ -753,24 +820,73 @@ export function initSessionGuard(provider) {
         });
     }
 
-    // 6. Tolerancia a errores recuperables de red / Node.js
+    // 6. Tolerancia a errores recuperables de red / Node.js / Firebase / Firestore
+    const isRecoverableError = (errorMsg) => {
+        const recoverablePatterns = [
+            // Errores de red genéricos
+            'Vendor should not return empty',
+            'EBUSY',
+            'ECONNRESET',
+            'ETIMEDOUT',
+            'EHOSTUNREACH',
+            'ENOTFOUND',
+            'ECONNREFUSED',
+            'EPIPE',
+            'EAI_AGAIN',
+            'ENETUNREACH',
+            'ENETDOWN',
+            'ECONNABORTED',
+            'EHOSTDOWN',
+            'ERR_SOCKET_CONNECTION_TIMEOUT',
+            'socket hang up',
+            'network timeout',
+            'No connection established',
+            // Errores de Chromium / Puppeteer
+            'Execution context was destroyed',
+            'Target closed',
+            'Protocol error',
+            'Evaluation failed',
+            'Session closed',
+            'Page crashed',
+            'frame was detached',
+            'Cannot find context with specified id',
+            'Inspected target navigated or closed',
+            'Connection closed',
+            // Errores de procesamiento de medios (sharp/image)
+            'colourspace',
+            'parameter space not set',
+            'Input buffer contains unsupported image format',
+            // Firebase / Firestore / gRPC
+            'GrpcConnection',
+            'UNAVAILABLE',
+            'firestore',
+            '@firebase',
+            'Listen stream',
+            'Write stream',
+            'grpc',
+            'RST_STREAM',
+            'GOAWAY',
+            'INTERNAL',
+            'DEADLINE_EXCEEDED',
+            'RESOURCE_EXHAUSTED',
+            'CANCELLED',
+            'DATA_LOSS',
+            'Firestore has already been terminated',
+            'Could not reach Cloud Firestore',
+            'Missing or insufficient permissions',
+            'Failed to get document',
+            '2800:3f0:',
+            'googleapis.com',
+            'firebaseio.com'
+        ];
+        return recoverablePatterns.some(p => errorMsg.includes(p));
+    };
+
     process.on('uncaughtException', (err) => {
         const errorMsg = err?.message || String(err || '');
-        const isRecoverable =
-            errorMsg.includes('Vendor should not return empty') ||
-            errorMsg.includes('EBUSY') ||
-            errorMsg.includes('ECONNRESET') ||
-            errorMsg.includes('ETIMEDOUT') ||
-            errorMsg.includes('EHOSTUNREACH') ||
-            errorMsg.includes('ENOTFOUND') ||
-            errorMsg.includes('Execution context was destroyed') ||
-            errorMsg.includes('Target closed') ||
-            errorMsg.includes('Protocol error') ||
-            errorMsg.includes('Evaluation failed') ||
-            errorMsg.includes('colourspace') ||
-            errorMsg.includes('parameter space not set');
+        const errorStack = err?.stack || '';
 
-        if (isRecoverable) {
+        if (isRecoverableError(errorMsg) || isRecoverableError(errorStack)) {
             console.warn(`⚠️ [SessionGuardian] Error no capturado recuperable absorbido para mantener bot activo: ${errorMsg}`);
             return;
         }
@@ -782,22 +898,10 @@ export function initSessionGuard(provider) {
 
     process.on('unhandledRejection', (reason) => {
         const errorMsg = reason?.message || String(reason || '');
-        const isIgnorable =
-            errorMsg.includes('colourspace') ||
-            errorMsg.includes('parameter space not set') ||
-            errorMsg.includes('Vendor should not return empty') ||
-            errorMsg.includes('EBUSY') ||
-            errorMsg.includes('ECONNRESET') ||
-            errorMsg.includes('ETIMEDOUT') ||
-            errorMsg.includes('EHOSTUNREACH') ||
-            errorMsg.includes('ENOTFOUND') ||
-            errorMsg.includes('Execution context was destroyed') ||
-            errorMsg.includes('Target closed') ||
-            errorMsg.includes('Protocol error') ||
-            errorMsg.includes('Evaluation failed') ||
-            (reason?.stack && reason.stack.includes('cleanImage'));
+        const errorStack = reason?.stack || '';
 
-        if (isIgnorable) {
+        if (isRecoverableError(errorMsg) || isRecoverableError(errorStack) ||
+            (errorStack && errorStack.includes('cleanImage'))) {
             console.warn(`⚠️ [SessionGuardian] Rechazo de promesa no crítico tolerado: ${errorMsg}`);
             return;
         }
