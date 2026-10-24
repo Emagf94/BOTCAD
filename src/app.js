@@ -8,7 +8,9 @@ import {
     initSessionGuard,
     cleanCorruptLockfiles,
     restoreSessionIfNeeded,
-    getGuardianProviderOptions
+    getGuardianProviderOptions,
+    updateQRStatus,
+    updateHostPhone
 } from './sessionGuard.js';
 import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
@@ -46,8 +48,22 @@ const main = async () => {
     const isHeadless = process.env.HEADLESS === 'true';
     const adapterProvider = createProvider(Provider, getGuardianProviderOptions(isHeadless));
 
+    // Capturar eventos de autenticación y vinculación de WPPConnect para la UI del Dashboard
+    adapterProvider.on('require_action', (payload) => {
+        const qr = payload?.payload?.qr;
+        if (qr) {
+            updateQRStatus(qr);
+        }
+    });
+
+    adapterProvider.on('host', (host) => {
+        if (host?.phone) {
+            updateHostPhone(host.phone);
+        }
+    });
+
     // ═══ SESSION GUARDIAN: Activar sistema de estabilidad infalible ═══
-    // Activa la armadura FS, latido zero-idle cada 45s, watchdog WAPI de 15s y backups espejo
+    // Activa la armadura FS, latido zero-idle, watchdog WAPI, backups espejo y sincronización UI
     initSessionGuard(adapterProvider);
 
     // 4. Base de datos de sesión en memoria

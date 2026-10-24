@@ -5,6 +5,7 @@ import {
     globalFilesCache,
     isAdmin,
     activeBridgeChats,
+    findActiveBridge,
     validateContactUser,
     validateName,
     formatName,
@@ -323,13 +324,16 @@ export const flowWelcome = addKeyword(EVENTS.WELCOME)
             return gotoFlow(flowMainMenu);
         }
 
+        // Verificar si ya tiene archivos precargados por flowMediaWelcome o captura previa
+        const yaTieneArchivos = globalFilesCache.has(ctx.from) && globalFilesCache.get(ctx.from).length > 0;
+
         // Detectar si el usuario envió un archivo o multimedia en su primera interacción
-        const esArchivoInicial = rawBody.includes('_event_media_') ||
+        const esArchivoInicial = !yaTieneArchivos && (rawBody.includes('_event_media_') ||
             rawBody.includes('_event_document_') ||
             rawBody.includes('_event_voice_note_') ||
             ctx.hasMedia ||
             ctx.message?.imageMessage ||
-            ctx.message?.documentMessage;
+            ctx.message?.documentMessage);
 
         if (esArchivoInicial) {
             try {
@@ -373,17 +377,78 @@ export const flowWelcome = addKeyword(EVENTS.WELCOME)
 
         const phone = ctx.from.split('@')[0];
         const user = await getUser(phone);
+        const tieneArchivos = globalFilesCache.has(ctx.from) && globalFilesCache.get(ctx.from).length > 0;
 
         if (user && user.name) {
             await state.update({ userName: user.name, contactUser: user.contactUser || '' });
             await new Promise(r => setTimeout(r, 1500));
-            const msg = renderMessage('bienvenidaRegistrado', { name: user.name });
+            let msg = renderMessage('bienvenidaRegistrado', { name: user.name });
+            if (tieneArchivos) {
+                msg = `📎 ¡Hola *${user.name}*! He recibido tu archivo correctamente.\n\n` + msg;
+            }
             await safeSendLogo(provider, ctx.from, msg);
             return gotoFlow(flowMainMenu);
         } else {
             await new Promise(r => setTimeout(r, 1500));
-            const msg = BOT_MESSAGES.bienvenidaNuevo || '¡Hola!\nSoy *Cadi*, tu asistente virtual 🤖.\n¡Bienvenido a *CAD Impresiones* 🖨️!';
+            let msg = BOT_MESSAGES.bienvenidaNuevo || '¡Hola!\nSoy *Cadi*, tu asistente virtual 🤖.\n¡Bienvenido a *CAD Impresiones* 🖨️!';
+            if (tieneArchivos) {
+                msg = `📎 ¡He recibido tu archivo correctamente!\n\n` + msg;
+            }
             await safeSendLogo(provider, ctx.from, msg);
             return gotoFlow(flowNameCapture);
         }
     });
+
+/**
+ * Capturador unificado para mensajes multimedia iniciales (Imágenes, Documentos, Audios).
+ * Guarda el archivo en cache sin romper flujos activos con capture y redirige al flujo de bienvenida.
+ */
+async function handleInitialMediaMessage(ctx, { gotoFlow, state, provider }) {
+    // 1. Si el usuario está en un chat activo con un asesor humano, no intervenir
+    if (findActiveBridge(ctx.from)) {
+        return;
+    }
+
+    // 2. Si es un comando de administrador, permitir escape
+    if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
+        const cmd = ctx.body.trim().toLowerCase();
+        if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) {
+            return gotoFlow(flowAdminBridge);
+        }
+        return gotoFlow(flowAdminBridgeLoop);
+    }
+
+    // 3. Descargar y almacenar el archivo de inmediato
+    try {
+        const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+        const filePath = fileInfo.filePath;
+        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+        globalFilesCache.get(ctx.from).push(filePath);
+        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+        globalFilesCache.get(ctx.from + '_directo').push(fileInfo);
+        const currentFiles = state.getMyState()?.archivos || [];
+        await state.update({ archivos: [...currentFiles, filePath] });
+        console.log(`[CAD Bot] Archivo inicial capturado en evento multimedia: ${fileInfo.originalName}`);
+    } catch (e) {
+        console.error("Error guardando multimedia inicial:", e);
+        const filePath = getFileReference(ctx, null);
+        if (!globalFilesCache.has(ctx.from)) globalFilesCache.set(ctx.from, []);
+        globalFilesCache.get(ctx.from).push(filePath);
+        if (!globalFilesCache.has(ctx.from + '_directo')) globalFilesCache.set(ctx.from + '_directo', []);
+        globalFilesCache.get(ctx.from + '_directo').push(filePath);
+        const currentFiles = state.getMyState()?.archivos || [];
+        await state.update({ archivos: [...currentFiles, filePath] });
+    }
+
+    // 4. Continuar al flujo de bienvenida universal
+    return gotoFlow(flowWelcome);
+}
+
+export const flowMediaWelcome = addKeyword(EVENTS.MEDIA)
+    .addAction(handleInitialMediaMessage);
+
+export const flowDocumentWelcome = addKeyword(EVENTS.DOCUMENT)
+    .addAction(handleInitialMediaMessage);
+
+export const flowVoiceNoteWelcome = addKeyword(EVENTS.VOICE_NOTE)
+    .addAction(handleInitialMediaMessage);

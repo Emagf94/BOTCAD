@@ -9,7 +9,10 @@ import {
     flowContactUserCapture,
     flowNameCapture,
     flowWelcomeRegistered,
-    flowWelcome
+    flowWelcome,
+    flowMediaWelcome,
+    flowDocumentWelcome,
+    flowVoiceNoteWelcome
 } from './main.flow.js';
 
 import {
@@ -75,6 +78,9 @@ import {
 // Arreglo unificado con todos los flujos para inicializar el bot
 export const allFlows = [
     flowWelcome,
+    flowMediaWelcome,
+    flowDocumentWelcome,
+    flowVoiceNoteWelcome,
     flowMenuCarteleras,
     flowMenuPlanos,
     flowPlanosTipo,
@@ -136,6 +142,9 @@ export {
     flowNameCapture,
     flowWelcomeRegistered,
     flowWelcome,
+    flowMediaWelcome,
+    flowDocumentWelcome,
+    flowVoiceNoteWelcome,
     flowAdminBridgeLoop,
     flowAdminBridge,
     flowAsesor,

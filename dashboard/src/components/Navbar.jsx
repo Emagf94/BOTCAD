@@ -3,10 +3,10 @@ import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { 
   Bot, LogOut, FolderTree, Users, ShieldCheck,
-  Menu, ChevronRight 
+  Menu, ChevronRight, QrCode
 } from 'lucide-react';
 
-export default function Navbar({ activeTab, setActiveTab, user }) {
+export default function Navbar({ activeTab, setActiveTab, user, sessionData }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = async () => {
@@ -17,7 +17,22 @@ export default function Navbar({ activeTab, setActiveTab, user }) {
     }
   };
 
+  const status = sessionData?.status || 'INITIALIZING';
+  const isConnected = status === 'CONNECTED';
+  const isRequiresAuth = status === 'REQUIRES_AUTH' || status === 'DISCONNECTED' || !!sessionData?.qrCode;
+
   const navItems = [
+    { 
+      id: 'connection', 
+      label: 'Conexión & QR', 
+      icon: QrCode, 
+      badge: isConnected ? 'En Línea' : (isRequiresAuth ? '¡Escanear!' : 'Conectando'),
+      badgeColor: isConnected ? 'rgba(16, 185, 129, 0.15)' : (isRequiresAuth ? 'rgba(244, 63, 94, 0.2)' : 'rgba(245, 158, 11, 0.2)'),
+      badgeTextColor: isConnected ? '#34d399' : (isRequiresAuth ? '#fda4af' : '#fbbf24'),
+      badgeBorder: isConnected ? '1px solid rgba(16, 185, 129, 0.3)' : (isRequiresAuth ? '1px solid rgba(244, 63, 94, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)'),
+      showDot: true,
+      dotClass: isConnected ? 'pulse-dot' : (isRequiresAuth ? 'pulse-dot-red' : 'pulse-dot-amber')
+    },
     { id: 'contacts', label: 'Lista de Contactos', icon: Users, badge: 'Clientes' },
     { id: 'prices', label: 'Catálogo & Categorías', icon: FolderTree, badge: 'Precios' },
     { id: 'advisors', label: 'Asesores & Permisos', icon: ShieldCheck, badge: 'Equipo' }
@@ -136,12 +151,17 @@ export default function Navbar({ activeTab, setActiveTab, user }) {
                   {item.badge && (
                     <span style={{
                       fontSize: '0.68rem',
-                      background: active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.06)',
-                      color: active ? '#bfdbfe' : 'var(--text-dim)',
+                      background: item.badgeColor || (active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.06)'),
+                      color: item.badgeTextColor || (active ? '#bfdbfe' : 'var(--text-dim)'),
+                      border: item.badgeBorder || 'none',
                       padding: '2px 6px',
                       borderRadius: '4px',
-                      fontWeight: 600
+                      fontWeight: 600,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
                     }}>
+                      {item.showDot && <span className={item.dotClass || 'pulse-dot'}></span>}
                       {item.badge}
                     </span>
                   )}

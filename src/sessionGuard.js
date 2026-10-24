@@ -24,6 +24,8 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { db } from './firebase.js';
 import { getWppClient } from './utils/fileHandler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -64,9 +66,9 @@ const EXCLUDED_FROM_BACKUP = new Set([
 ]);
 
 // Configuración de intervalos del Guardián
-const HEARTBEAT_INTERVAL_MS = 45 * 1000;      // Latido Zero-Idle cada 45 segundos
+const HEARTBEAT_INTERVAL_MS = 35 * 1000;      // Latido Zero-Idle cada 35 segundos
 const BACKUP_INTERVAL_MS = 10 * 60 * 1000;     // Backup periódico cada 10 minutos
-const MAX_CONSECUTIVE_HEARTBEAT_FAILS = 10;    // 10 fallos (~7.5 min) antes de considerar reinicio limpio
+const MAX_CONSECUTIVE_HEARTBEAT_FAILS = 10;    // 10 fallos (~6 min) antes de considerar reinicio limpio
 
 // Variables de estado interno
 let heartbeatIntervalId = null;
@@ -77,6 +79,19 @@ let consecutivePingFailures = 0;
 let isShuttingDown = false;
 let isFileSystemArmorInstalled = false;
 let allowInternalSessionWipe = false;
+
+// Variables de sincronización con Firestore y UI Dashboard
+let currentStatus = 'INITIALIZING'; // 'INITIALIZING' | 'CONNECTED' | 'RECONNECTING' | 'REQUIRES_AUTH' | 'DISCONNECTED'
+let currentQrCode = null;
+let currentPairingCode = null;
+let currentPairingExpiry = null;
+let connectedHostPhone = '573116584423';
+let lastConnectedTimestamp = Date.now();
+let lastHeartbeatTimestamp = null;
+let lastLogMessage = 'Iniciando sistema de sesión (Línea: +573116584423)';
+let isReloading = false;
+let deepCheckTimeoutId = null;
+let lastProcessedCommandTimestamp = 0;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  PILAR 1: ARMADURA DE SISTEMA DE ARCHIVOS (ANTI-WIPE DE BUILDERBOT)
@@ -372,8 +387,372 @@ export function getGuardianProviderOptions(isHeadless = false) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PILAR 4 & 5: LATIDO ZERO-IDLE (45s) Y WATCHDOG RESILIENTE DE ESTADOS
+//  PILAR 4 & 5: SINCRONIZACIÓN EN TIEMPO REAL CON UI, WATCHDOG Y AUTO-RECONEXIÓN
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Publica el estado de la sesión en Firestore (doc 'config/bot_session')
+ * para sincronización en tiempo real con el Dashboard.
+ */
+export async function publishSessionStatus(overrides = {}) {
+    try {
+        if (!db) return;
+        const statusDoc = doc(db, 'config', 'bot_session');
+        const data = {
+            status: overrides.status || currentStatus,
+            qrCode: overrides.qrCode !== undefined ? overrides.qrCode : currentQrCode,
+            pairingCode: overrides.pairingCode !== undefined ? overrides.pairingCode : currentPairingCode,
+            pairingExpiry: overrides.pairingExpiry !== undefined ? overrides.pairingExpiry : currentPairingExpiry,
+            hostPhone: overrides.hostPhone !== undefined ? overrides.hostPhone : connectedHostPhone,
+            lastHeartbeat: new Date().toISOString(),
+            lastConnectedAt: lastConnectedTimestamp ? new Date(lastConnectedTimestamp).toISOString() : null,
+            lastMessage: overrides.lastMessage || lastLogMessage,
+            consecutiveFails: consecutivePingFailures,
+            updatedAt: new Date().toISOString(),
+            ...overrides
+        };
+        await setDoc(statusDoc, data, { merge: true });
+    } catch (e) {
+        // Fallo de red con Firebase no debe afectar la operación del bot
+        console.warn(`⚠️ [SessionGuardian] Fallo menor sincronizando estado con Firestore: ${e.message}`);
+    }
+}
+
+/**
+ * Actualiza el código QR activo y lo publica inmediatamente en el Dashboard.
+ */
+export function updateQRStatus(base64QR) {
+    if (!base64QR) return;
+    currentStatus = 'REQUIRES_AUTH';
+    currentQrCode = base64QR.startsWith('data:image') ? base64QR : `data:image/png;base64,${base64QR}`;
+    lastLogMessage = 'Esperando escaneo de código QR en la aplicación de WhatsApp';
+    console.log(`📷 [SessionGuardian] Nuevo código QR disponible. Sincronizado en tiempo real con la UI.`);
+    publishSessionStatus({
+        status: 'REQUIRES_AUTH',
+        qrCode: currentQrCode,
+        lastMessage: lastLogMessage
+    });
+}
+
+/**
+ * Actualiza el teléfono anfitrión conectado y limpia estados de autenticación.
+ */
+export function updateHostPhone(phone) {
+    if (!phone) return;
+    connectedHostPhone = String(phone).replace(/\D/g, '');
+    currentStatus = 'CONNECTED';
+    currentQrCode = null;
+    currentPairingCode = null;
+    lastConnectedTimestamp = Date.now();
+    consecutivePingFailures = 0;
+    lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+    console.log(`🟢 [SessionGuardian] Sesión activa confirmada con host: +${connectedHostPhone}`);
+    publishSessionStatus({
+        status: 'CONNECTED',
+        hostPhone: connectedHostPhone,
+        qrCode: null,
+        pairingCode: null,
+        lastMessage: lastLogMessage
+    });
+}
+
+/**
+ * Solicita y genera un código de vinculación de 8 dígitos para un número de teléfono.
+ */
+export async function generatePairingCode(phone) {
+    if (!phone) {
+        publishSessionStatus({ lastMessage: 'Error: Número de teléfono no especificado para vincular' });
+        return;
+    }
+    const cleanPhone = String(phone).replace(/\D/g, '');
+    if (cleanPhone.length < 8) {
+        publishSessionStatus({ lastMessage: 'Error: El número de teléfono debe tener al menos 8 dígitos' });
+        return;
+    }
+
+    const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+    if (!client || !client.page || client.page.isClosed()) {
+        publishSessionStatus({ lastMessage: 'Error: Navegador Chromium no disponible para generar código' });
+        return;
+    }
+
+    try {
+        console.log(`📱 [SessionGuardian] Solicitando código de vinculación para +${cleanPhone}...`);
+        publishSessionStatus({
+            status: 'CONNECTING',
+            lastMessage: `Generando código de vinculación para +${cleanPhone}...`
+        });
+
+        // 1. Invocar inicio de vinculación por código en WhatsApp Web
+        await client.page.evaluate(async (p) => {
+            try {
+                if (window.WPP?.conn?.startLinkDeviceCodeForPhoneNumber) {
+                    await window.WPP.conn.startLinkDeviceCodeForPhoneNumber(p);
+                }
+            } catch (e) {
+                console.warn('startLinkDeviceCodeForPhoneNumber error:', e);
+            }
+        }, cleanPhone);
+
+        // 2. Esperar y consultar el código generado en WPP.conn
+        let code = null;
+        for (let i = 0; i < 12; i++) {
+            await new Promise(r => setTimeout(r, 600));
+            code = await client.page.evaluate(() => {
+                try {
+                    return window.WPP?.conn?.getLinkDeviceCode?.() || 
+                           window.WPP?.conn?.linkCode ||
+                           null;
+                } catch { return null; }
+            }).catch(() => null);
+            if (code) break;
+        }
+
+        if (code) {
+            currentPairingCode = code;
+            currentPairingExpiry = Date.now() + 120000; // 2 minutos de validez
+            currentStatus = 'REQUIRES_AUTH';
+            lastLogMessage = `Código de vinculación listo: ${code}`;
+            console.log(`✅ [SessionGuardian] Código de vinculación generado: ${code}`);
+            publishSessionStatus({
+                status: 'REQUIRES_AUTH',
+                pairingCode: code,
+                pairingExpiry: currentPairingExpiry,
+                lastMessage: lastLogMessage
+            });
+        } else {
+            console.warn(`⚠️ [SessionGuardian] No se obtuvo código de texto directamente, verificando pantalla de WhatsApp...`);
+            await checkForQRScreen(client);
+            publishSessionStatus({
+                lastMessage: `Solicitud de vinculación enviada para +${cleanPhone}. Revisa tu WhatsApp.`
+            });
+        }
+    } catch (err) {
+        console.error(`⚠️ [SessionGuardian] Error en generatePairingCode: ${err.message}`);
+        publishSessionStatus({ lastMessage: `Error generando código: ${err.message}` });
+    }
+}
+
+/**
+ * Escucha comandos remotos desde el Dashboard ('config/bot_session_commands').
+ */
+export function initRemoteCommandListener() {
+    try {
+        if (!db) return;
+        const cmdDoc = doc(db, 'config', 'bot_session_commands');
+        onSnapshot(cmdDoc, async (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.data();
+            const cmdTimestamp = data?.timestamp || 0;
+            if (cmdTimestamp <= lastProcessedCommandTimestamp) return;
+            lastProcessedCommandTimestamp = cmdTimestamp;
+
+            console.log(`📡 [SessionGuardian] Comando remoto recibido desde Dashboard: ${data.action}`);
+
+            if (data.action === 'REQUEST_PAIRING_CODE') {
+                await generatePairingCode(data.phone);
+            } else if (data.action === 'FORCE_RELOAD') {
+                const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+                if (client) {
+                    await attemptPageReload(client);
+                } else {
+                    publishSessionStatus({ lastMessage: 'Error: Cliente Chromium no disponible para recargar' });
+                }
+            } else if (data.action === 'FORCE_RECONNECT') {
+                const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+                if (client) {
+                    triggerGentleKeepAlive(client);
+                    await attemptPageReload(client);
+                }
+            }
+        }, (err) => {
+            console.warn(`⚠️ [SessionGuardian] Error en listener de comandos remotos: ${err.message}`);
+        });
+        console.log(`📡 [SessionGuardian] Listener de comandos remotos desde Dashboard activado.`);
+    } catch (e) {
+        console.warn(`⚠️ [SessionGuardian] No se pudo inicializar listener de comandos: ${e.message}`);
+    }
+}
+
+/**
+ * Busca si la pantalla de WhatsApp Web tiene un código QR renderizado en el DOM.
+ */
+export async function checkForQRScreen(client) {
+    if (!client || !client.page || client.page.isClosed()) return false;
+    try {
+        const qrBase64 = await client.page.evaluate(() => {
+            try {
+                const canvas = document.querySelector('canvas[aria-label="Scan this QR code to link a device"]') ||
+                               document.querySelector('canvas') ||
+                               document.querySelector('div[data-ref] canvas');
+                if (canvas && typeof canvas.toDataURL === 'function') {
+                    return canvas.toDataURL('image/png');
+                }
+            } catch { /* ignorar */ }
+            return null;
+        }).catch(() => null);
+
+        if (qrBase64 && qrBase64.length > 100) {
+            updateQRStatus(qrBase64);
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Resuelve automáticamente el cuadro de conflicto si la sesión fue abierta en otra pestaña/navegador.
+ */
+async function attemptConflictResolution(client) {
+    if (!client || !client.page || client.page.isClosed()) return;
+    try {
+        console.log(`⚡ [SessionGuardian] Intentando resolver conflicto de sesión (click en "Usar aquí")...`);
+        const clicked = await client.page.evaluate(() => {
+            try {
+                const buttons = Array.from(document.querySelectorAll('div[role="button"], button'));
+                const useHereBtn = buttons.find(b => {
+                    const text = (b.innerText || b.textContent || '').toLowerCase();
+                    return text.includes('usar aquí') || text.includes('use here');
+                });
+                if (useHereBtn) {
+                    useHereBtn.click();
+                    return true;
+                }
+            } catch { /* ignorar */ }
+            return false;
+        }).catch(() => false);
+
+        if (clicked) {
+            console.log(`✅ [SessionGuardian] Botón "Usar aquí" presionado con éxito.`);
+            setTimeout(() => triggerGentleKeepAlive(client), 3000);
+        }
+    } catch (e) {
+        console.warn(`⚠️ [SessionGuardian] Fallo resolviendo conflicto: ${e.message}`);
+    }
+}
+
+/**
+ * Recarga suavemente la página de WhatsApp Web sin destruir el proceso.
+ * Permite reconectar si los tokens en IndexedDB siguen intactos.
+ */
+export async function attemptPageReload(client) {
+    if (isReloading) return false;
+    if (!client || !client.page || client.page.isClosed()) return false;
+    isReloading = true;
+    currentStatus = 'RECONNECTING';
+    lastLogMessage = 'Recargando página de WhatsApp Web para auto-reconectar...';
+    publishSessionStatus({ status: 'RECONNECTING', lastMessage: lastLogMessage });
+
+    try {
+        console.log(`🔄 [SessionGuardian] Recargando página de WhatsApp Web para reconectar sin perder sesión...`);
+        await client.page.reload({ waitUntil: 'domcontentloaded', timeout: 35000 });
+        await new Promise(r => setTimeout(r, 8000));
+
+        // Verificar si la sesión sigue viva dentro del chat
+        const inChat = await Promise.race([
+            client.isLoggedIn().catch(() => null),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
+        ]).catch(() => null);
+
+        if (inChat === true) {
+            consecutivePingFailures = 0;
+            currentStatus = 'CONNECTED';
+            currentQrCode = null;
+            lastConnectedTimestamp = Date.now();
+            lastLogMessage = 'Reconexión exitosa tras recarga de página.';
+            console.log(`🟢 [SessionGuardian] Reconexión exitosa tras recarga de página.`);
+            triggerGentleKeepAlive(client);
+            publishSessionStatus({ status: 'CONNECTED', qrCode: null, lastMessage: lastLogMessage });
+            isReloading = false;
+            return true;
+        }
+
+        // Si no está en chat, verificar si apareció pantalla de QR
+        console.warn(`⚠️ [SessionGuardian] Recarga completada pero no se detectó chat. Buscando pantalla de QR...`);
+        await checkForQRScreen(client);
+        isReloading = false;
+        return false;
+    } catch (e) {
+        console.warn(`⚠️ [SessionGuardian] Error en recarga de página: ${e.message}`);
+        isReloading = false;
+        return false;
+    }
+}
+
+/**
+ * Programa una verificación profunda tras estados transitorios de red.
+ */
+function scheduleDeepConnectionCheck(client, state) {
+    if (deepCheckTimeoutId) clearTimeout(deepCheckTimeoutId);
+    deepCheckTimeoutId = setTimeout(async () => {
+        if (!client || !client.page || client.page.isClosed()) return;
+        try {
+            console.log(`🔍 [SessionGuardian] Verificación profunda post-estado transitorio (${state})...`);
+            const isLogged = await client.isLoggedIn().catch(() => null);
+            if (isLogged === true) {
+                consecutivePingFailures = 0;
+                currentStatus = 'CONNECTED';
+                console.log(`🟢 [SessionGuardian] Verificación profunda: Sesión sigue conectada y saludable.`);
+                publishSessionStatus({ status: 'CONNECTED' });
+                return;
+            }
+
+            console.warn(`⚠️ [SessionGuardian] Sesión sigue sin responder tras 30s. Intentando recarga suave...`);
+            await attemptPageReload(client);
+        } catch (e) {
+            console.warn(`⚠️ [SessionGuardian] Error en verificación profunda: ${e.message}`);
+        }
+    }, 30000);
+}
+
+/**
+ * Manejo exhaustivo del estado UNPAIRED con verificación en 3 etapas.
+ */
+function handleUnpairedState(client) {
+    console.warn(`⚠️ [SessionGuardian] Reporte de UNPAIRED. Iniciando verificación en 3 etapas...`);
+    currentStatus = 'RECONNECTING';
+    lastLogMessage = 'Verificando reporte de desvinculación...';
+    publishSessionStatus({ status: 'RECONNECTING', lastMessage: lastLogMessage });
+
+    setTimeout(async () => {
+        try {
+            const auth1 = await Promise.race([
+                client.isLoggedIn().catch(() => null),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+            ]).catch(() => null);
+
+            if (auth1 === true) {
+                console.log(`🟢 [SessionGuardian] Falsa alarma de UNPAIRED (etapa 1). Sesión activa.`);
+                currentStatus = 'CONNECTED';
+                publishSessionStatus({ status: 'CONNECTED' });
+                triggerGentleKeepAlive(client);
+                return;
+            }
+
+            // Etapa 2: Intentar recarga de página (recupera sesión si tokens siguen vivos)
+            console.warn(`⚠️ [SessionGuardian] UNPAIRED etapa 1 no confirmó sesión. Intentando recarga suave...`);
+            const reloaded = await attemptPageReload(client);
+            if (reloaded) {
+                console.log(`🟢 [SessionGuardian] Sesión recuperada tras recarga en UNPAIRED etapa 2.`);
+                return;
+            }
+
+            // Etapa 3: Confirmar desvinculación definitiva y publicar estado
+            console.error(`🛑 [SessionGuardian] Desvinculación definitiva confirmada desde el celular.`);
+            currentStatus = 'REQUIRES_AUTH';
+            lastLogMessage = 'Sesión desvinculada. Por favor escanea el código QR o solicita código en el Dashboard.';
+            await checkForQRScreen(client);
+            publishSessionStatus({
+                status: 'REQUIRES_AUTH',
+                lastMessage: lastLogMessage
+            });
+        } catch (err) {
+            console.warn(`⚠️ [SessionGuardian] Error verificando UNPAIRED: ${err.message}`);
+        }
+    }, 5000);
+}
 
 /**
  * Reactivación suave y no destructiva de la conexión de WhatsApp Web.
@@ -403,7 +782,16 @@ function handleStateChange(state, client) {
 
     if (state === 'CONNECTED') {
         consecutivePingFailures = 0;
+        currentStatus = 'CONNECTED';
+        lastConnectedTimestamp = Date.now();
+        lastLogMessage = 'Conexión activa y estable con WhatsApp Web';
         console.log(`🟢 [GUARDIAN] Conexión activa y estable con WhatsApp Web.`);
+        publishSessionStatus({
+            status: 'CONNECTED',
+            qrCode: null,
+            pairingCode: null,
+            lastMessage: lastLogMessage
+        });
         return;
     }
 
@@ -411,63 +799,31 @@ function handleStateChange(state, client) {
     const transientStates = ['TIMEOUT', 'DISCONNECTED', 'PAIRING', 'OPENING', 'RESUMING', 'SYNCING', 'UNPAIRED_IDLE'];
     if (transientStates.includes(state)) {
         console.warn(`🟡 [GUARDIAN] Estado de red transitorio (${state}). WhatsApp Web se está auto-reanudando pasivamente...`);
+        currentStatus = 'RECONNECTING';
+        lastLogMessage = `Estado de red transitorio (${state}). Auto-reanudando...`;
+        publishSessionStatus({ status: 'RECONNECTING', lastMessage: lastLogMessage });
         triggerGentleKeepAlive(client);
+        scheduleDeepConnectionCheck(client, state);
         return;
     }
 
     // Conflicto de sesión
     if (state === 'CONFLICT') {
-        console.warn(`⚠️ [GUARDIAN] Conflicto de sesión (otra sesión abierta en otro navegador). Manteniendo espera...`);
+        console.warn(`⚠️ [GUARDIAN] Conflicto de sesión (abierta en otro dispositivo). Intentando resolver...`);
+        lastLogMessage = 'Conflicto de sesión detectado. Reclamando conexión...';
+        publishSessionStatus({ lastMessage: lastLogMessage });
+        attemptConflictResolution(client);
         return;
     }
 
-    // Estado UNPAIRED definitivo - Verificación en 3 etapas con mayor tolerancia
+    // Estado UNPAIRED definitivo
     if (state === 'UNPAIRED') {
-        console.warn(`⚠️ [GUARDIAN] Reporte de UNPAIRED. Verificando autenticación real antes de tomar acción...`);
-        
-        // Etapa 1: Esperar 5s y verificar
-        setTimeout(async () => {
-            try {
-                const authenticated1 = await Promise.race([
-                    client.isLoggedIn().catch(() => null),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-                ]);
-                if (authenticated1 === true) {
-                    console.log(`🟢 [GUARDIAN] Falsa alarma de UNPAIRED (etapa 1); la sesión sigue autenticada.`);
-                    triggerGentleKeepAlive(client);
-                    return;
-                }
-                
-                // Etapa 2: Enviar señal de reactivación y esperar 10s más
-                console.warn(`⚠️ [GUARDIAN] UNPAIRED etapa 1 no confirmó sesión. Reactivando y esperando...`);
-                triggerGentleKeepAlive(client);
-                
-                setTimeout(async () => {
-                    try {
-                        const authenticated2 = await Promise.race([
-                            client.isLoggedIn().catch(() => null),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-                        ]);
-                        if (authenticated2 === true || authenticated2 === null) {
-                            console.log(`🟢 [GUARDIAN] UNPAIRED etapa 2: Sesión recuperada o en estado indeterminado. Manteniendo.`);
-                            return;
-                        }
-                        console.error(`🛑 [GUARDIAN] Sesión desvinculada definitivamente desde el dispositivo después de verificación exhaustiva.`);
-                    } catch {
-                        console.warn(`⚠️ [GUARDIAN] UNPAIRED etapa 2: No se pudo verificar, manteniendo sesión activa como precaución.`);
-                    }
-                }, 10000);
-            } catch {
-                console.warn(`⚠️ [GUARDIAN] Error en verificación UNPAIRED. Manteniendo sesión activa como precaución.`);
-            }
-        }, 5000);
+        handleUnpairedState(client);
     }
 }
 
 /**
- * Inicia el Latido Proactivo "Zero-Idle" cada 45 segundos.
- * Realiza una micro-evaluación en la página de Chromium para mantener caliente el WebSocket
- * y activo el hilo de ejecución de JavaScript, evitando suspensiones por falta de interacción.
+ * Inicia el Latido Proactivo "Zero-Idle" cada 35 segundos con escalación y sincronización en Firestore.
  */
 function startZeroIdleHeartbeat(client) {
     if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
@@ -479,7 +835,7 @@ function startZeroIdleHeartbeat(client) {
 
         try {
             // Micro-evaluación segura en el contexto del navegador (<10ms)
-            await Promise.race([
+            const evaluation = await Promise.race([
                 client.page.evaluate(() => {
                     try {
                         if (window.WPP?.conn?.setKeepAlive) window.WPP.conn.setKeepAlive(true);
@@ -492,11 +848,18 @@ function startZeroIdleHeartbeat(client) {
                         return { isOnline: true };
                     }
                 }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido (25s)')), 25000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido (20s)')), 20000))
             ]);
 
             // Si responde, el hilo de Chromium está 100% activo y vivo
             consecutivePingFailures = 0;
+            lastHeartbeatTimestamp = Date.now();
+            
+            // Publicar actualización periódica de latido en Firestore
+            publishSessionStatus({
+                status: currentStatus === 'REQUIRES_AUTH' ? 'REQUIRES_AUTH' : 'CONNECTED',
+                lastHeartbeat: new Date().toISOString()
+            });
         } catch (err) {
             consecutivePingFailures++;
             console.warn(`⚠️ [GUARDIAN] Latido #${consecutivePingFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILS} sin respuesta: ${err.message}`);
@@ -504,8 +867,14 @@ function startZeroIdleHeartbeat(client) {
             if (consecutivePingFailures === 3) {
                 console.log(`🔄 [GUARDIAN] 3 latidos fallidos. Enviando señal suave de reactivación...`);
                 triggerGentleKeepAlive(client);
+            } else if (consecutivePingFailures === 5) {
+                console.log(`🔄 [GUARDIAN] 5 latidos fallidos. Intentando recarga de página Chromium...`);
+                attemptPageReload(client);
+            } else if (consecutivePingFailures === 8) {
+                console.warn(`⚠️ [GUARDIAN] 8 latidos fallidos. Verificando si apareció pantalla de QR...`);
+                checkForQRScreen(client);
             } else if (consecutivePingFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILS) {
-                console.error(`🛑 [GUARDIAN] ${MAX_CONSECUTIVE_HEARTBEAT_FAILS} latidos fallidos consecutivos (>7.5 minutos sin respuesta del navegador).`);
+                console.error(`🛑 [GUARDIAN] ${MAX_CONSECUTIVE_HEARTBEAT_FAILS} latidos fallidos consecutivos (>6 minutos sin respuesta del navegador).`);
                 console.error(`🛑 [GUARDIAN] Ejecutando cierre ordenado para reinicio limpio del proceso...`);
                 gracefulShutdown('HEARTBEAT_TIMEOUT');
             }
@@ -755,6 +1124,16 @@ export function initSessionGuard(provider) {
             return;
         }
 
+        // Detectar si el error es de inicialización de WPPConnect / sharp (NO desvinculación real)
+        const isInitError = payloadStr.includes('An error occurred during WPP initialization') ||
+            payloadStr.includes('cleanImage') ||
+            payloadStr.includes('colourspace');
+
+        if (isInitError) {
+            console.warn(`🛡️ [SessionGuardian] Fallo de inicialización de WPPConnect transitorio. La sesión en IndexedDB se mantiene intacta.`);
+            return;
+        }
+
         console.warn(`🛑 [SessionGuardian] Armadura FS activa: Se impidió el borrado de bot_sessions.`);
 
         // Verificar si WhatsApp realmente perdió autenticación
@@ -912,6 +1291,15 @@ export function initSessionGuard(provider) {
 
     // 7. Iniciar backups periódicos
     startPeriodicBackups();
+
+    // 8. Iniciar listener de comandos remotos desde el Dashboard de control
+    initRemoteCommandListener();
+
+    // 9. Publicar estado inicial en Firestore para sincronización instantánea
+    publishSessionStatus({
+        status: 'INITIALIZING',
+        lastMessage: 'Guardián Infalible de sesión iniciado y vigilando'
+    });
 
     console.log(`✅ [SessionGuardian] Guardián Infalible completamente armado y operativo.\n`);
 }
