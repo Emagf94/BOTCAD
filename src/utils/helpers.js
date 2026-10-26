@@ -378,7 +378,9 @@ export const isAdmin = (fromOrCtx) => {
         if (fromOrCtx.sender?.id) candidates.push(fromOrCtx.sender.id);
         if (fromOrCtx.sender?.phone) candidates.push(fromOrCtx.sender.phone);
         if (fromOrCtx._data?.from) candidates.push(fromOrCtx._data.from);
+        if (fromOrCtx._data?.author) candidates.push(fromOrCtx._data.author);
         if (fromOrCtx._data?.id?.participant) candidates.push(fromOrCtx._data.id.participant);
+        if (fromOrCtx._data?.id?.remote) candidates.push(fromOrCtx._data.id.remote);
         if (fromOrCtx.key?.remoteJid) candidates.push(fromOrCtx.key.remoteJid);
         if (fromOrCtx.key?.participant) candidates.push(fromOrCtx.key.participant);
     }
@@ -403,8 +405,15 @@ export const isAdmin = (fromOrCtx) => {
                 if (advLid && (cand === advLid || cand.includes(advLid) || advLid.includes(cand))) {
                     return true;
                 }
-                if (advPhone && (cand === advPhone || cand.endsWith(advPhone) || advPhone.endsWith(cand))) {
-                    return true;
+                if (advPhone) {
+                    if (cand === advPhone || cand.endsWith(advPhone) || advPhone.endsWith(cand)) {
+                        return true;
+                    }
+                    // Manejo Colombia 10 <-> 12 dígitos
+                    if (advPhone.length === 10 && cand === `57${advPhone}`) return true;
+                    if (advPhone.length === 12 && advPhone.startsWith('57') && cand === advPhone.substring(2)) return true;
+                    if (cand.length === 10 && advPhone === `57${cand}`) return true;
+                    if (cand.length === 12 && cand.startsWith('57') && advPhone === cand.substring(2)) return true;
                 }
             }
         }
@@ -437,7 +446,14 @@ export const isAdmin = (fromOrCtx) => {
         '3136303477'
     ];
     
-    return candidates.some(cand => finalAdmins.some(admin => String(cand).includes(admin)));
+    return candidateDigits.some(cand => finalAdmins.some(admin => {
+        const cleanAdmin = String(admin).replace(/\D/g, '');
+        if (!cleanAdmin) return false;
+        if (cand === cleanAdmin || cand.endsWith(cleanAdmin) || cleanAdmin.endsWith(cand)) return true;
+        if (cleanAdmin.length === 10 && cand === `57${cleanAdmin}`) return true;
+        if (cleanAdmin.length === 12 && cleanAdmin.startsWith('57') && cand === cleanAdmin.substring(2)) return true;
+        return false;
+    })) || candidates.some(cand => finalAdmins.some(admin => String(cand).includes(admin)));
 };
 
 /**

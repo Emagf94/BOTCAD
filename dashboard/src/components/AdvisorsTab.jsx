@@ -75,8 +75,9 @@ export default function AdvisorsTab() {
     const unsubscribe = onSnapshot(docRef, async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (Array.isArray(data.advisors)) {
-          setAdvisors(data.advisors);
+        const incoming = Array.isArray(data.advisors) ? data.advisors : (Array.isArray(data.list) ? data.list : null);
+        if (incoming) {
+          setAdvisors(incoming);
           setLoading(false);
           return;
         }
@@ -95,7 +96,7 @@ export default function AdvisorsTab() {
           }
         }
         setAdvisors(initList);
-        await setDoc(docRef, { advisors: initList, updatedAt: new Date().toISOString() }, { merge: true });
+        await setDoc(docRef, { advisors: initList, list: initList, updatedAt: new Date().toISOString() }, { merge: true });
       } catch (err) {
         console.error('Error inicializando advisors:', err);
         setAdvisors(INITIAL_ADVISORS);
@@ -114,27 +115,40 @@ export default function AdvisorsTab() {
   const persistAdvisors = async (updatedList) => {
     setSaving(true);
     try {
-      // 1. Guardar en config/advisors
+      // 1. Guardar en config/advisors con compatibilidad total (advisors y list)
       await setDoc(doc(db, 'config', 'advisors'), {
         advisors: updatedList,
+        list: updatedList,
         updatedAt: new Date().toISOString()
-      });
+      }, { merge: true });
 
       // 2. Calcular variables derivadas para config/general
       const activeSupport = updatedList
         .filter(a => a.active && a.receiveSupport !== false)
-        .map(a => `${String(a.phone).replace(/\D/g, '')}@c.us`);
+        .map(a => {
+          let p = String(a.phone).replace(/\D/g, '');
+          if (p.length === 10) p = '57' + p;
+          return `${p}@c.us`;
+        });
 
       const activeOrders = updatedList
         .filter(a => a.active && a.receiveOrders !== false)
-        .map(a => `${String(a.phone).replace(/\D/g, '')}@c.us`);
+        .map(a => {
+          let p = String(a.phone).replace(/\D/g, '');
+          if (p.length === 10) p = '57' + p;
+          return `${p}@c.us`;
+        });
 
       const escapesSet = new Set();
       updatedList.forEach(a => {
         if (a.active && a.canExecuteCommands !== false) {
           const cleanP = String(a.phone || '').replace(/\D/g, '');
           const cleanL = String(a.lid || '').replace(/\D/g, '');
-          if (cleanP) escapesSet.add(cleanP);
+          if (cleanP) {
+            escapesSet.add(cleanP);
+            if (cleanP.length === 10) escapesSet.add('57' + cleanP);
+            if (cleanP.length === 12 && cleanP.startsWith('57')) escapesSet.add(cleanP.substring(2));
+          }
           if (cleanL) escapesSet.add(cleanL);
         }
       });
@@ -143,9 +157,11 @@ export default function AdvisorsTab() {
       escapesSet.add('573184849332');
       escapesSet.add('235780886794250');
       escapesSet.add('573135363218');
+      escapesSet.add('573136303477');
+      escapesSet.add('3136303477');
 
       await setDoc(doc(db, 'config', 'general'), {
-        adminSupportPhone: activeSupport.join(', ') || '573184849332@c.us, 573135363218@c.us',
+        adminSupportPhone: activeSupport.join(', ') || '573184849332@c.us, 573135363218@c.us, 573136303477@c.us',
         adminOrdersPhone: activeOrders.join(', ') || '573135363218@c.us',
         adminEscapes: Array.from(escapesSet)
       }, { merge: true });
@@ -233,6 +249,15 @@ export default function AdvisorsTab() {
         return a;
       });
     } else {
+      const existingAdv = advisors.find(a => {
+        const p = String(a.phone || '').replace(/\D/g, '');
+        return p === finalPhone || (finalPhone.length === 12 && p === finalPhone.substring(2)) || (p.length === 12 && finalPhone === p.substring(2));
+      });
+      if (existingAdv) {
+        alert(`Ya existe un asesor registrado con el número ${finalPhone} (${existingAdv.name}). Puedes editarlo directamente en la lista.`);
+        return;
+      }
+
       const newAdv = {
         id: `adv_${Date.now()}`,
         name: formData.name.trim(),

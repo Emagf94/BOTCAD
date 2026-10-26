@@ -188,8 +188,12 @@ export const getAdvisorName = (fromOrCtx) => {
         if (advLid && (advLid === cleanDigits || cleanDigits.includes(advLid) || advLid.includes(cleanDigits))) {
             return adv.name || 'Asesor';
         }
-        if (advPhone && (advPhone === cleanDigits || cleanDigits.endsWith(advPhone) || advPhone.endsWith(cleanDigits))) {
-            return adv.name || 'Asesor';
+        if (advPhone) {
+            if (advPhone === cleanDigits || cleanDigits.endsWith(advPhone) || advPhone.endsWith(cleanDigits)) {
+                return adv.name || 'Asesor';
+            }
+            if (advPhone.length === 10 && cleanDigits === `57${advPhone}`) return adv.name || 'Asesor';
+            if (advPhone.length === 12 && advPhone.startsWith('57') && cleanDigits === advPhone.substring(2)) return adv.name || 'Asesor';
         }
     }
 
@@ -336,7 +340,7 @@ export const initBotConfig = async () => {
         const snap = await getDoc(advisorsRef);
         if (!snap.exists()) {
             console.log('📝 Creando documento inicial de asesores en Firestore...');
-            await setDoc(advisorsRef, { list: BOT_ADVISORS });
+            await setDoc(advisorsRef, { advisors: BOT_ADVISORS, list: BOT_ADVISORS, updatedAt: new Date().toISOString() }, { merge: true });
         }
     } catch (err) {
         console.error('Error comprobando documento de asesores:', err);
@@ -345,18 +349,33 @@ export const initBotConfig = async () => {
     onSnapshot(advisorsRef, (snapshot) => {
         if (snapshot.exists()) {
             const data = snapshot.data();
-            const list = Array.isArray(data?.list) ? data.list : [];
+            const rawList = Array.isArray(data?.advisors) ? data.advisors : (Array.isArray(data?.list) ? data.list : []);
             BOT_ADVISORS.length = 0;
-            BOT_ADVISORS.push(...list);
+            BOT_ADVISORS.push(...rawList);
 
             // Recomputar teléfonos de soporte y comandos activos para compatibilidad total
-            const activeSupport = list
+            const activeSupport = rawList
                 .filter(a => a.active !== false && a.receiveSupport !== false && a.phone)
-                .map(a => `${String(a.phone).replace(/\D/g, '')}@c.us`);
+                .map(a => {
+                    let p = String(a.phone).replace(/\D/g, '');
+                    if (p.length === 10) p = '57' + p;
+                    return `${p}@c.us`;
+                });
 
-            const activeEscapes = list
+            const activeEscapes = rawList
                 .filter(a => a.active !== false && a.canExecuteCommands !== false)
-                .flatMap(a => [String(a.phone || '').replace(/\D/g, ''), String(a.lid || '').replace(/\D/g, '')])
+                .flatMap(a => {
+                    let p = String(a.phone || '').replace(/\D/g, '');
+                    const l = String(a.lid || '').replace(/\D/g, '');
+                    const res = [];
+                    if (p) {
+                        res.push(p);
+                        if (p.length === 10) res.push('57' + p);
+                        if (p.length === 12 && p.startsWith('57')) res.push(p.substring(2));
+                    }
+                    if (l) res.push(l);
+                    return res;
+                })
                 .filter(Boolean);
 
             if (activeSupport.length > 0) {
@@ -366,7 +385,7 @@ export const initBotConfig = async () => {
                 BOT_SETTINGS.adminEscapes = Array.from(new Set([...(BOT_SETTINGS.adminEscapes || []), ...activeEscapes]));
             }
 
-            console.log(`⚡ [SYNC] Asesores actualizados en tiempo real (${list.length} registrados, ${activeSupport.length} activos en soporte).`);
+            console.log(`⚡ [SYNC] Asesores actualizados en tiempo real (${rawList.length} registrados, ${activeSupport.length} activos en soporte).`);
         }
     }, (err) => {
         console.error('Error en listener de asesores Firestore:', err);

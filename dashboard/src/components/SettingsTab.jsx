@@ -61,10 +61,10 @@ export default function SettingsTab() {
     }));
   };
 
-  const handleSave = async () => {
+    const handleSave = async () => {
     setSaving(true);
     try {
-      await setDoc(doc(db, 'config', 'general'), settings);
+      await setDoc(doc(db, 'config', 'general'), settings, { merge: true });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3500);
     } catch (err) {
