@@ -82,6 +82,26 @@ export default function ConnectionTab({ sessionData }) {
     }
   };
 
+  // Forzar Reapertura de Chromium y Regeneración de QR
+  const handleReopenBrowser = async () => {
+    setReloadingSession(true);
+    setActionMessage('Ordenando al servidor limpiar lockfiles, reabrir Chromium y regenerar el código QR...');
+    try {
+      await setDoc(doc(db, 'config', 'bot_session_commands'), {
+        action: 'REOPEN_BROWSER',
+        timestamp: Date.now()
+      });
+      setTimeout(() => {
+        setReloadingSession(false);
+        setActionMessage(null);
+      }, 8000);
+    } catch (err) {
+      console.error(err);
+      alert('Error: ' + err.message);
+      setReloadingSession(false);
+    }
+  };
+
   // Copiar código de vinculación al portapapeles
   const handleCopyCode = () => {
     if (!sessionData?.pairingCode) return;
@@ -119,7 +139,17 @@ export default function ConnectionTab({ sessionData }) {
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleReopenBrowser}
+            disabled={reloadingSession}
+            className="btn btn-emerald"
+            style={{ padding: '9px 16px', fontSize: '0.86rem' }}
+            title="Limpia bloqueos, reabre el navegador Chromium y regenera un código QR nuevo inmediatamente"
+          >
+            <RefreshCw size={16} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
+            {reloadingSession ? 'Reabriendo...' : 'Reabrir Chromium & Regenerar QR'}
+          </button>
           <button
             onClick={handleForceReload}
             disabled={reloadingSession}
@@ -317,9 +347,19 @@ export default function ConnectionTab({ sessionData }) {
               <div style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-muted)' }}>
                 <RefreshCw size={32} className="spin" style={{ animation: 'spin 1.5s linear infinite', margin: '0 auto 12px auto' }} />
                 <p style={{ fontSize: '0.88rem' }}>Generando código QR desde Chromium...</p>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '4px' }}>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '4px', marginBottom: '16px' }}>
                   Aparecerá aquí automáticamente en cuanto esté listo.
                 </p>
+                <button
+                  onClick={handleReopenBrowser}
+                  disabled={reloadingSession}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                  title="Si Chromium tardó en abrirse, pulsa para forzar su reapertura"
+                >
+                  <RefreshCw size={14} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
+                  {reloadingSession ? 'Reabriendo...' : 'Forzar Reapertura de Chromium'}
+                </button>
               </div>
             )}
           </div>

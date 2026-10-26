@@ -23,6 +23,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import child_process from 'child_process';
 import { fileURLToPath } from 'url';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase.js';
@@ -246,9 +247,49 @@ export function installFileSystemArmor() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Verifica si el proceso y la página de Chromium están vivos y operativos.
+ */
+export function isBrowserAlive(client) {
+    if (!client) return false;
+    if (!client.page) return false;
+    try {
+        if (typeof client.page.isClosed === 'function' && client.page.isClosed()) {
+            return false;
+        }
+        if (typeof client.page.browser === 'function') {
+            const browser = client.page.browser();
+            if (browser && typeof browser.isConnected === 'function' && !browser.isConnected()) {
+                return false;
+            }
+        }
+    } catch {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Cierra de forma forzada cualquier proceso huérfano de Chromium/Chrome en Windows
+ * que tenga tomado el directorio bot_sessions impidiendo la reapertura.
+ */
+export function killOrphanChromeProcesses() {
+    if (process.platform !== 'win32') return;
+    try {
+        const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe'\\" | Where-Object { $_.CommandLine -like '*bot_sessions*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
+        child_process.execSync(cmd, { stdio: 'ignore', timeout: 6000 });
+        console.log(`🧹 [SessionGuardian] Procesos huérfanos de Chromium verificados y limpiados.`);
+    } catch {
+        // Ignorar si no se encontraron procesos huérfanos
+    }
+}
+
+/**
  * Elimina lockfiles residuales que Chromium deja tras reinicios de PC o caídas.
  */
 export function cleanCorruptLockfiles() {
+    // Matar previamente procesos zombi que retengan los archivos abiertos
+    killOrphanChromeProcesses();
+
     const lockfiles = [LOCKFILE_PATH, SINGLETONLOCK_PATH, DEVTOOLS_PATH];
     let cleaned = 0;
 
@@ -376,14 +417,56 @@ export function getGuardianProviderOptions(isHeadless = false) {
     ];
 
     return {
+        name: 'bot',
         autoClose: 0,
         deviceSyncTimeout: 0,
+        disableWelcome: true,
+        updatesLog: false,
+        catchQR: (base64QRImg, asciiQR, attempt, urlCode) => {
+            console.log(`📷 [Provider:catchQR] Código QR recibido de WhatsApp Web (intento #${attempt || 1})`);
+            updateQRStatus(base64QRImg);
+            // Guardar imagen local para compatibilidad sin depender de la UI
+            try {
+                const base64Data = base64QRImg.replace(/^data:image\/png;base64,/, '');
+                fs.writeFileSync(path.join(PROJECT_ROOT, 'bot.qr.png'), Buffer.from(base64Data, 'base64'));
+            } catch {}
+            // Sobrescribe y anula el throw Error() en attempt == 5 de BuilderBot
+        },
+        statusFind: (statusSession, session) => {
+            handleWppStatusFind(statusSession, session);
+        },
         puppeteerOptions: {
             headless: isHeadless,
             args: antiThrottleFlags
         },
         browserArgs: antiThrottleFlags
     };
+}
+
+/**
+ * Manejador centralizado de eventos de estado de ciclo de vida de WPPConnect (statusFind).
+ */
+export function handleWppStatusFind(statusSession, session) {
+    console.log(`📡 [SessionGuardian:statusFind] Estado de sesión reportado: ${statusSession} (${session || 'bot'})`);
+    if (statusSession === 'autocloseCalled' || statusSession === 'browserClose' || statusSession === 'serverClose') {
+        console.warn(`🛑 [SessionGuardian] statusFind reporta cierre de Chromium (${statusSession}). Disparando auto-recuperación...`);
+        if (!isShuttingDown) {
+            recoverChromiumBrowser(statusSession);
+        }
+    } else if (statusSession === 'notLogged') {
+        currentStatus = 'REQUIRES_AUTH';
+        lastLogMessage = 'Esperando vinculación de WhatsApp Web...';
+        publishSessionStatus({ status: 'REQUIRES_AUTH', lastMessage: lastLogMessage });
+        const client = activeClient || (providerRef ? providerRef.vendor : null);
+        if (client) startActiveQRWatcher(client);
+    } else if (statusSession === 'inChat' || statusSession === 'isLogged') {
+        currentStatus = 'CONNECTED';
+        stopActiveQRWatcher();
+        publishSessionStatus({ status: 'CONNECTED', qrCode: null, pairingCode: null });
+    } else if (statusSession === 'phoneNotConnected' || statusSession === 'disconnectedMobile') {
+        console.warn(`⚠️ [SessionGuardian] Teléfono anfitrión desconectado temporalmente (${statusSession}).`);
+        publishSessionStatus({ lastMessage: `Teléfono desconectado (${statusSession}). Esperando reconexión...` });
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -471,8 +554,13 @@ export async function generatePairingCode(phone) {
     }
 
     const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
-    if (!client || !client.page || client.page.isClosed()) {
-        publishSessionStatus({ lastMessage: 'Error: Navegador Chromium no disponible para generar código' });
+    if (!isBrowserAlive(client)) {
+        console.warn(`⚠️ [SessionGuardian] Chromium no disponible para generar código de vinculación. Relanzando...`);
+        await recoverChromiumBrowser('PAIRING_CODE_BROWSER_CLOSED');
+    }
+    const readyClient = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+    if (!isBrowserAlive(readyClient)) {
+        publishSessionStatus({ lastMessage: 'Error: No se pudo iniciar el navegador Chromium para generar código' });
         return;
     }
 
@@ -484,7 +572,7 @@ export async function generatePairingCode(phone) {
         });
 
         // 1. Invocar inicio de vinculación por código en WhatsApp Web
-        await client.page.evaluate(async (p) => {
+        await readyClient.page.evaluate(async (p) => {
             try {
                 if (window.WPP?.conn?.startLinkDeviceCodeForPhoneNumber) {
                     await window.WPP.conn.startLinkDeviceCodeForPhoneNumber(p);
@@ -498,7 +586,7 @@ export async function generatePairingCode(phone) {
         let code = null;
         for (let i = 0; i < 12; i++) {
             await new Promise(r => setTimeout(r, 600));
-            code = await client.page.evaluate(() => {
+            code = await readyClient.page.evaluate(() => {
                 try {
                     return window.WPP?.conn?.getLinkDeviceCode?.() || 
                            window.WPP?.conn?.linkCode ||
@@ -522,7 +610,7 @@ export async function generatePairingCode(phone) {
             });
         } else {
             console.warn(`⚠️ [SessionGuardian] No se obtuvo código de texto directamente, verificando pantalla de WhatsApp...`);
-            await checkForQRScreen(client);
+            await checkForQRScreen(readyClient);
             publishSessionStatus({
                 lastMessage: `Solicitud de vinculación enviada para +${cleanPhone}. Revisa tu WhatsApp.`
             });
@@ -530,6 +618,171 @@ export async function generatePairingCode(phone) {
     } catch (err) {
         console.error(`⚠️ [SessionGuardian] Error en generatePairingCode: ${err.message}`);
         publishSessionStatus({ lastMessage: `Error generando código: ${err.message}` });
+    }
+}
+
+let isRecoveringBrowser = false;
+
+/**
+ * Procedimiento de auto-recuperación de Chromium cuando se cierra, cae o queda inactivo.
+ * Limpia procesos zombi, lockfiles y relanza Chromium en caliente de forma limpia.
+ */
+export async function recoverChromiumBrowser(reason = 'UNEXPECTED_CLOSE') {
+    if (isShuttingDown) return;
+    if (isRecoveringBrowser) {
+        console.log(`⏳ [SessionGuardian] Auto-recuperación de Chromium ya en curso (${reason}). Esperando...`);
+        return;
+    }
+    isRecoveringBrowser = true;
+    currentStatus = 'RECONNECTING';
+    lastLogMessage = `Chromium inactivo o cerrado (${reason}). Relanzando navegador automáticamente...`;
+    console.warn(`\n🔄 [SessionGuardian] ==============================================`);
+    console.warn(`🔄 [SessionGuardian] AUTO-RECUPERACIÓN DE CHROMIUM ACTIVADA: ${reason}`);
+    console.warn(`🔄 [SessionGuardian] ==============================================\n`);
+    publishSessionStatus({ status: 'RECONNECTING', lastMessage: lastLogMessage });
+
+    try {
+        // 1. Matar procesos huérfanos de Chrome vinculados a bot_sessions
+        killOrphanChromeProcesses();
+        await new Promise(r => setTimeout(r, 1200));
+
+        // 2. Limpiar lockfiles residuales
+        cleanCorruptLockfiles();
+
+        // 3. Si el proveedor soporta initVendor, relanzar el vendor
+        if (providerRef && typeof providerRef.initVendor === 'function') {
+            console.log(`🌐 [SessionGuardian] Relanzando vendor de Chromium con opciones blindadas...`);
+            const newVendor = await Promise.race([
+                providerRef.initVendor(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de initVendor (45s)')), 45000))
+            ]);
+
+            if (newVendor) {
+                console.log(`✅ [SessionGuardian] Vendor de Chromium relanzado con éxito.`);
+                if (typeof providerRef.listenOnEvents === 'function') {
+                    providerRef.listenOnEvents(newVendor);
+                }
+                await attachWppClient(newVendor);
+
+                // Comprobar estado inicial tras relanzamiento
+                const logged = await newVendor.isLoggedIn().catch(() => null);
+                if (logged === true) {
+                    currentStatus = 'CONNECTED';
+                    lastLogMessage = 'Bot reconectado y operativo tras relanzamiento';
+                    publishSessionStatus({ status: 'CONNECTED', lastMessage: lastLogMessage });
+                } else {
+                    currentStatus = 'REQUIRES_AUTH';
+                    lastLogMessage = 'Chromium relanzado. Esperando escaneo de código QR...';
+                    publishSessionStatus({ status: 'REQUIRES_AUTH', lastMessage: lastLogMessage });
+                    startActiveQRWatcher(newVendor);
+                }
+                isRecoveringBrowser = false;
+                return;
+            }
+        }
+    } catch (err) {
+        console.error(`❌ [SessionGuardian] Fallo durante relanzamiento en memoria: ${err.message}`);
+    }
+
+    // 4. Si el relanzamiento en memoria no fue exitoso, forzar salida limpia para que el supervisor reinicie
+    console.warn(`🛑 [SessionGuardian] Forzando reinicio limpio del proceso para re-inicializar entorno...`);
+    isRecoveringBrowser = false;
+    gracefulShutdown(`RECOVER_${reason}`);
+}
+
+let qrWatcherIntervalId = null;
+
+/**
+ * Vigilante activo continuo de código QR.
+ * Inspecciona el DOM cada 2.5s, extrae el canvas en base64, detecta si el QR expiró
+ * y pulsa automáticamente el botón de recarga de WhatsApp Web si aparece.
+ */
+export function startActiveQRWatcher(client) {
+    if (qrWatcherIntervalId) return;
+
+    console.log(`📷 [SessionGuardian] Iniciando Vigilante Activo de Código QR (regeneración continua)...`);
+
+    let qrScanAttempts = 0;
+    qrWatcherIntervalId = setInterval(async () => {
+        if (currentStatus === 'CONNECTED') {
+            stopActiveQRWatcher();
+            return;
+        }
+
+        const currentClient = activeClient || client;
+        if (!isBrowserAlive(currentClient)) {
+            console.warn(`⚠️ [SessionGuardian] Vigilante de QR: Chromium no está activo. Activando auto-recuperación...`);
+            recoverChromiumBrowser('QR_WATCHER_BROWSER_DEAD');
+            return;
+        }
+
+        try {
+            // 1. Comprobar si ya se logueó
+            const isLogged = await currentClient.isLoggedIn().catch(() => null);
+            if (isLogged === true) {
+                console.log(`🟢 [SessionGuardian] WhatsApp Web reporta sesión iniciada. Deteniendo vigilante QR.`);
+                currentStatus = 'CONNECTED';
+                currentQrCode = null;
+                publishSessionStatus({ status: 'CONNECTED', qrCode: null });
+                stopActiveQRWatcher();
+                return;
+            }
+
+            // 2. Comprobar si WhatsApp Web muestra el botón para recargar el QR por inactividad
+            await currentClient.page.evaluate(() => {
+                try {
+                    const buttons = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+                    for (const btn of buttons) {
+                        const txt = (btn.innerText || btn.textContent || '').toLowerCase();
+                        if (txt.includes('recargar') || txt.includes('reload') || txt.includes('click to reload') || txt.includes('hacer clic')) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    const qrOverlay = document.querySelector('div[data-ref] span[role="button"], span[data-icon="refresh-large"]');
+                    if (qrOverlay) {
+                        qrOverlay.click();
+                        return true;
+                    }
+                } catch { /* ignorar */ }
+                return false;
+            }).catch(() => null);
+
+            // 3. Extraer el canvas del código QR
+            const qrBase64 = await currentClient.page.evaluate(() => {
+                try {
+                    const canvas = document.querySelector('canvas[aria-label="Scan this QR code to link a device"]') ||
+                                   document.querySelector('canvas') ||
+                                   document.querySelector('div[data-ref] canvas');
+                    if (canvas && typeof canvas.toDataURL === 'function') {
+                        return canvas.toDataURL('image/png');
+                    }
+                } catch { /* ignorar */ }
+                return null;
+            }).catch(() => null);
+
+            if (qrBase64 && qrBase64.length > 100) {
+                if (qrBase64 !== currentQrCode) {
+                    qrScanAttempts++;
+                    console.log(`📷 [SessionGuardian] Código QR capturado y sincronizado con Dashboard (ciclo #${qrScanAttempts}).`);
+                    updateQRStatus(qrBase64);
+                    try {
+                        const base64Data = qrBase64.replace(/^data:image\/png;base64,/, '');
+                        fs.writeFileSync(path.join(PROJECT_ROOT, 'bot.qr.png'), Buffer.from(base64Data, 'base64'));
+                    } catch {}
+                }
+            }
+        } catch (err) {
+            console.warn(`⚠️ [SessionGuardian] Vigilante QR ciclo con advertencia: ${err.message}`);
+        }
+    }, 2500);
+}
+
+export function stopActiveQRWatcher() {
+    if (qrWatcherIntervalId) {
+        clearInterval(qrWatcherIntervalId);
+        qrWatcherIntervalId = null;
+        console.log(`🛑 [SessionGuardian] Vigilante Activo de Código QR detenido.`);
     }
 }
 
@@ -549,20 +802,31 @@ export function initRemoteCommandListener() {
 
             console.log(`📡 [SessionGuardian] Comando remoto recibido desde Dashboard: ${data.action}`);
 
-            if (data.action === 'REQUEST_PAIRING_CODE') {
+            if (data.action === 'REOPEN_BROWSER') {
+                console.log(`🌐 [SessionGuardian] Comando remoto: Forzar reapertura de Chromium y regeneración de QR.`);
+                await recoverChromiumBrowser('REMOTE_USER_REQUEST');
+            } else if (data.action === 'REQUEST_PAIRING_CODE') {
+                const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+                if (!isBrowserAlive(client)) {
+                    console.log(`🌐 [SessionGuardian] Relanzando Chromium antes de generar código de vinculación...`);
+                    await recoverChromiumBrowser('PAIRING_CODE_BROWSER_CLOSED');
+                }
                 await generatePairingCode(data.phone);
             } else if (data.action === 'FORCE_RELOAD') {
                 const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
-                if (client) {
+                if (isBrowserAlive(client)) {
                     await attemptPageReload(client);
                 } else {
-                    publishSessionStatus({ lastMessage: 'Error: Cliente Chromium no disponible para recargar' });
+                    console.log(`🌐 [SessionGuardian] Chromium no disponible para recargar. Relanzando...`);
+                    await recoverChromiumBrowser('FORCE_RELOAD_BROWSER_CLOSED');
                 }
             } else if (data.action === 'FORCE_RECONNECT') {
                 const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
-                if (client) {
+                if (isBrowserAlive(client)) {
                     triggerGentleKeepAlive(client);
                     await attemptPageReload(client);
+                } else {
+                    await recoverChromiumBrowser('FORCE_RECONNECT_BROWSER_CLOSED');
                 }
             }
         }, (err) => {
@@ -639,7 +903,11 @@ async function attemptConflictResolution(client) {
  */
 export async function attemptPageReload(client) {
     if (isReloading) return false;
-    if (!client || !client.page || client.page.isClosed()) return false;
+    if (!isBrowserAlive(client)) {
+        console.warn(`⚠️ [SessionGuardian] attemptPageReload: Chromium no está activo. Activando auto-recuperación...`);
+        recoverChromiumBrowser('RELOAD_BROWSER_CLOSED');
+        return false;
+    }
     isReloading = true;
     currentStatus = 'RECONNECTING';
     lastLogMessage = 'Recargando página de WhatsApp Web para auto-reconectar...';
@@ -663,15 +931,16 @@ export async function attemptPageReload(client) {
             lastConnectedTimestamp = Date.now();
             lastLogMessage = 'Reconexión exitosa tras recarga de página.';
             console.log(`🟢 [SessionGuardian] Reconexión exitosa tras recarga de página.`);
+            stopActiveQRWatcher();
             triggerGentleKeepAlive(client);
             publishSessionStatus({ status: 'CONNECTED', qrCode: null, lastMessage: lastLogMessage });
             isReloading = false;
             return true;
         }
 
-        // Si no está en chat, verificar si apareció pantalla de QR
-        console.warn(`⚠️ [SessionGuardian] Recarga completada pero no se detectó chat. Buscando pantalla de QR...`);
-        await checkForQRScreen(client);
+        // Si no está en chat, activar vigilante activo de código QR para regeneración continua
+        console.warn(`⚠️ [SessionGuardian] Recarga completada pero no se detectó chat. Activando vigilante QR...`);
+        startActiveQRWatcher(client);
         isReloading = false;
         return false;
     } catch (e) {
@@ -687,7 +956,7 @@ export async function attemptPageReload(client) {
 function scheduleDeepConnectionCheck(client, state) {
     if (deepCheckTimeoutId) clearTimeout(deepCheckTimeoutId);
     deepCheckTimeoutId = setTimeout(async () => {
-        if (!client || !client.page || client.page.isClosed()) return;
+        if (!isBrowserAlive(client)) return;
         try {
             console.log(`🔍 [SessionGuardian] Verificación profunda post-estado transitorio (${state})...`);
             const isLogged = await client.isLoggedIn().catch(() => null);
@@ -695,6 +964,7 @@ function scheduleDeepConnectionCheck(client, state) {
                 consecutivePingFailures = 0;
                 currentStatus = 'CONNECTED';
                 console.log(`🟢 [SessionGuardian] Verificación profunda: Sesión sigue conectada y saludable.`);
+                stopActiveQRWatcher();
                 publishSessionStatus({ status: 'CONNECTED' });
                 return;
             }
@@ -743,11 +1013,12 @@ function handleUnpairedState(client) {
             console.error(`🛑 [SessionGuardian] Desvinculación definitiva confirmada desde el celular.`);
             currentStatus = 'REQUIRES_AUTH';
             lastLogMessage = 'Sesión desvinculada. Por favor escanea el código QR o solicita código en el Dashboard.';
-            await checkForQRScreen(client);
             publishSessionStatus({
                 status: 'REQUIRES_AUTH',
                 lastMessage: lastLogMessage
             });
+            // Iniciar vigilante activo de código QR para regeneración continua y auto-clic
+            startActiveQRWatcher(client);
         } catch (err) {
             console.warn(`⚠️ [SessionGuardian] Error verificando UNPAIRED: ${err.message}`);
         }
@@ -829,14 +1100,18 @@ function startZeroIdleHeartbeat(client) {
     if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
 
     heartbeatIntervalId = setInterval(async () => {
-        if (!client || !client.page || client.page.isClosed()) {
+        const currentClient = activeClient || client;
+        if (!isBrowserAlive(currentClient)) {
+            consecutivePingFailures++;
+            console.warn(`⚠️ [GUARDIAN] Chromium no está activo (fallo #${consecutivePingFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILS}). Iniciando auto-recuperación...`);
+            recoverChromiumBrowser('HEARTBEAT_BROWSER_DEAD');
             return;
         }
 
         try {
             // Micro-evaluación segura en el contexto del navegador (<10ms)
             const evaluation = await Promise.race([
-                client.page.evaluate(() => {
+                currentClient.page.evaluate(() => {
                     try {
                         if (window.WPP?.conn?.setKeepAlive) window.WPP.conn.setKeepAlive(true);
                         return {
@@ -866,17 +1141,17 @@ function startZeroIdleHeartbeat(client) {
 
             if (consecutivePingFailures === 3) {
                 console.log(`🔄 [GUARDIAN] 3 latidos fallidos. Enviando señal suave de reactivación...`);
-                triggerGentleKeepAlive(client);
+                triggerGentleKeepAlive(currentClient);
             } else if (consecutivePingFailures === 5) {
                 console.log(`🔄 [GUARDIAN] 5 latidos fallidos. Intentando recarga de página Chromium...`);
-                attemptPageReload(client);
+                attemptPageReload(currentClient);
             } else if (consecutivePingFailures === 8) {
                 console.warn(`⚠️ [GUARDIAN] 8 latidos fallidos. Verificando si apareció pantalla de QR...`);
-                checkForQRScreen(client);
+                startActiveQRWatcher(currentClient);
             } else if (consecutivePingFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILS) {
                 console.error(`🛑 [GUARDIAN] ${MAX_CONSECUTIVE_HEARTBEAT_FAILS} latidos fallidos consecutivos (>6 minutos sin respuesta del navegador).`);
-                console.error(`🛑 [GUARDIAN] Ejecutando cierre ordenado para reinicio limpio del proceso...`);
-                gracefulShutdown('HEARTBEAT_TIMEOUT');
+                console.error(`🛑 [GUARDIAN] Ejecutando auto-recuperación de Chromium...`);
+                recoverChromiumBrowser('MAX_HEARTBEAT_FAILURES');
             }
         }
     }, HEARTBEAT_INTERVAL_MS);
@@ -893,6 +1168,31 @@ async function attachWppClient(client) {
     activeClient = client;
 
     console.log(`\n🔗 [SessionGuardian] Vinculando Guardián al cliente WPPConnect...`);
+
+    // 0. Detectar cierre o desconexión del navegador/página
+    if (client.page && typeof client.page.on === 'function') {
+        client.page.on('close', () => {
+            console.warn(`🛑 [SessionGuardian] Evento page.close detectado en Chromium.`);
+            if (!isShuttingDown) {
+                recoverChromiumBrowser('PAGE_CLOSED');
+            }
+        });
+        client.page.on('error', (err) => {
+            console.warn(`⚠️ [SessionGuardian] Error en página Chromium: ${err.message}`);
+        });
+    }
+
+    try {
+        const browser = typeof client.page?.browser === 'function' ? client.page.browser() : null;
+        if (browser && typeof browser.on === 'function') {
+            browser.on('disconnected', () => {
+                console.warn(`🛑 [SessionGuardian] Evento browser.disconnected detectado en Chromium.`);
+                if (!isShuttingDown) {
+                    recoverChromiumBrowser('BROWSER_DISCONNECTED');
+                }
+            });
+        }
+    } catch {}
 
     // 1. Activar Phone Watchdog nativo de WPPConnect (forzar verificación cada 15s)
     if (typeof client.startPhoneWatchdog === 'function') {
@@ -930,6 +1230,11 @@ async function attachWppClient(client) {
 
     // 4. Iniciar Latido Zero-Idle permanente
     startZeroIdleHeartbeat(client);
+
+    // 5. Si la sesión requiere autenticación, iniciar vigilante QR
+    if (currentStatus === 'REQUIRES_AUTH') {
+        startActiveQRWatcher(client);
+    }
 
     console.log(`✅ [SessionGuardian] Todas las defensas en vivo conectadas con éxito.\n`);
 }
@@ -1041,6 +1346,7 @@ export async function gracefulShutdown(signal = 'MANUAL') {
 
     console.log(`\n🛑 [SessionGuardian] Señal ${signal} recibida. Ejecutando apagado seguro y ordenado...`);
 
+    stopActiveQRWatcher();
     if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
     if (backupIntervalId) clearInterval(backupIntervalId);
 
