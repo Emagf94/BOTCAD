@@ -1,6 +1,6 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { BOT_SETTINGS } from '../botConfig.js';
-import { getUser } from '../firebase.js';
+import { getUser, getAllUsers } from '../firebase.js';
 import {
     isWorkingHour,
     isAdmin,
@@ -18,6 +18,13 @@ import {
     getCustomerDisplayInfo,
     getAdvisorName
 } from '../utils/helpers.js';
+import {
+    startBroadcast,
+    cancelBroadcast,
+    isBroadcasting,
+    pendingAdminCampaign,
+    interpolateVariables
+} from '../services/broadcastService.js';
 import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
 
@@ -130,6 +137,11 @@ export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
             return fallBack();
         }
 
+        if (bodyLower.startsWith('!difusion') || bodyLower.startsWith('!masivo') || bodyLower.startsWith('!confirmar') || bodyLower.startsWith('!cancelar')) {
+            await provider.sendMessage(ctx.from, '⚠️ Estás dentro de una sesión activa de soporte con un cliente. Escribe *!fin* primero para salir antes de realizar difusiones masivas.', {});
+            return fallBack();
+        }
+
         const esMedia = (ctx.body && (ctx.body.includes('_media_') || ctx.body.includes('_document_') || ctx.body.includes('_image_') || ctx.body.includes('_voice_note_') || ctx.body.includes('_video_') || ctx.body.includes('_event_forward_'))) || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage || ctx.message?.videoMessage || ctx.message?.audioMessage || ctx.message?.forwardedMessage?.imageMessage || ctx.message?.forwardedMessage?.documentMessage || ctx.message?.videoMessage || ctx.message?.forwardedMessage?.audioMessage;
         
         let caption = ctx.body || '';
@@ -151,7 +163,7 @@ export const flowAdminBridgeLoop = addKeyword(EVENTS.ACTION)
         return fallBack();
     });
 
-export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!cola', '!estado'])
+export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!cola', '!estado', '!difusion', '!masivo', '!confirmar', '!cancelar'])
     .addAction(async (ctx, { provider, gotoFlow }) => {
         console.log("=== [DEBUG ADMIN BRIDGE] ===");
         console.log("FROM:", ctx.from, "BODY:", ctx.body);
@@ -198,6 +210,138 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
                 listMsg += `\nPara atender al primer cliente, escribe *!atender*`;
                 await provider.sendMessage(ctx.from, listMsg, {});
             }
+            return;
+        }
+
+        // 3. Comandos de Difusión Masiva (!difusion / !masivo)
+        if (txt.startsWith('!difusion') || txt.startsWith('!masivo')) {
+            const rawBody = ctx.body || '';
+            const cleanedText = rawBody.replace(/^!(difusion|masivo)/i, '').trim();
+
+            const esMedia = (rawBody && (rawBody.includes('_media_') || rawBody.includes('_document_') || rawBody.includes('_image_'))) || ctx.hasMedia || ctx.message?.imageMessage || ctx.message?.documentMessage;
+
+            // Si el admin escribió solo !difusion sin mensaje ni imagen
+            if (!cleanedText && !esMedia) {
+                const helpMsg = `📢 *SISTEMA DE DIFUSIÓN MASIVA (CAD IMPRESIONES)*\n\n` +
+                    `Envía comunicados personalizados a todos tus clientes con intervalos seguros Anti-Ban.\n\n` +
+                    `📌 *Cómo enviar:*\n` +
+                    `• *Texto solo:* Escribe:\n` +
+                    `  \`!difusion [tu mensaje]\`\n\n` +
+                    `• *Imagen + Texto:* Envía una foto con el pie de foto:\n` +
+                    `  \`!difusion [tu mensaje]\`\n\n` +
+                    `✨ *Variables automáticas disponibles:*\n` +
+                    `• \`{name}\` o \`{nombre}\` : Nombre registrado del cliente\n` +
+                    `• \`{phone}\` o \`{telefono}\` : Número del cliente\n` +
+                    `• \`{contacto}\` : Usuario de contacto alternativo\n` +
+                    `• \`{empresa}\` : CAD Impresiones\n\n` +
+                    `💡 *Ejemplo:* \n` +
+                    `_!difusion ¡Hola {name}! 👋 En {empresa} tenemos 20% de descuento en planos esta semana._\n\n` +
+                    `🚦 *Comandos de control:*\n` +
+                    `• *!confirmar* : Iniciar envío tras ver la muestra\n` +
+                    `• *!cancelar* : Descartar o detener difusión en curso`;
+                await provider.sendMessage(ctx.from, helpMsg, {});
+                return;
+            }
+
+            if (isBroadcasting()) {
+                await provider.sendMessage(ctx.from, '⚠️ Ya hay una difusión masiva en progreso. Si deseas detenerla, escribe *!cancelar*.', {});
+                return;
+            }
+
+            let mediaPath = null;
+            if (esMedia) {
+                try {
+                    const fileInfo = await downloadAndSaveIncomingFile(ctx, provider, './downloads');
+                    if (fileInfo && fileInfo.filePath) {
+                        mediaPath = fileInfo.filePath;
+                    }
+                } catch (eMedia) {
+                    console.warn('⚠️ No se pudo descargar imagen de difusión:', eMedia.message);
+                }
+            }
+
+            const allUsers = await getAllUsers();
+            const validRecipients = allUsers.filter(u => u.phone || u.id);
+
+            if (validRecipients.length === 0) {
+                await provider.sendMessage(ctx.from, '⚠️ No se encontraron clientes registrados en la base de datos de usuarios.', {});
+                return;
+            }
+
+            const sampleUser = validRecipients[0];
+            const sampleMsg = interpolateVariables(cleanedText, sampleUser);
+            const estMinutes = Math.ceil((validRecipients.length * 7) / 60);
+
+            pendingAdminCampaign.set(ctx.from, {
+                template: cleanedText,
+                mediaPath,
+                recipients: validRecipients,
+                count: validRecipients.length,
+                createdAt: Date.now()
+            });
+
+            const previewMsg = `📢 *VISTA PREVIA DE DIFUSIÓN MASIVA*\n\n` +
+                `👥 *Destinatarios:* ${validRecipients.length} clientes registrados\n` +
+                `⏱️ *Intervalo seguro:* 6 a 9 seg (Protección Anti-Ban)\n` +
+                `⏳ *Tiempo estimado:* ~${estMinutes} minuto(s)\n` +
+                `${mediaPath ? '🖼️ *Adjunto:* Imagen flyer lista para enviar ✅\n' : ''}` +
+                `══════════════════════════════\n` +
+                `📱 *Mensaje de muestra para:* ${sampleUser.name || 'Cliente'} (${sampleUser.phone || sampleUser.id})\n\n` +
+                `${sampleMsg}\n` +
+                `══════════════════════════════\n\n` +
+                `⚠️ *¿Confirmas el envío a todos los ${validRecipients.length} clientes?*\n` +
+                `👉 Escribe *!confirmar* para iniciar el envío.\n` +
+                `👉 Escribe *!cancelar* para descartar la campaña.`;
+
+            await provider.sendMessage(ctx.from, previewMsg, {});
+            return;
+        }
+
+        // 4. Comando !confirmar
+        if (txt.startsWith('!confirmar')) {
+            if (!pendingAdminCampaign.has(ctx.from)) {
+                await provider.sendMessage(ctx.from, '⚠️ No tienes ninguna difusión pendiente por confirmar. Escribe *!difusion* para crear una.', {});
+                return;
+            }
+
+            const campaign = pendingAdminCampaign.get(ctx.from);
+            pendingAdminCampaign.delete(ctx.from);
+
+            await provider.sendMessage(
+                ctx.from,
+                `🚀 *Iniciando difusión masiva a ${campaign.count} clientes...*\n` +
+                `Se enviará de manera secuencial con pausas anti-ban. Te informaré los avances automáticamente.\n\n` +
+                `_Para interrumpir en cualquier momento, escribe *!cancelar*._`,
+                {}
+            );
+
+            await startBroadcast({
+                campaignId: Date.now().toString(),
+                template: campaign.template,
+                mediaPath: campaign.mediaPath,
+                recipients: campaign.recipients,
+                delaySeconds: 7,
+                adminPhone: ctx.from,
+                initiator: 'WHATSAPP'
+            });
+            return;
+        }
+
+        // 5. Comando !cancelar
+        if (txt.startsWith('!cancelar')) {
+            if (pendingAdminCampaign.has(ctx.from)) {
+                pendingAdminCampaign.delete(ctx.from);
+                await provider.sendMessage(ctx.from, '❌ Difusión masiva pendiente cancelada y descartada con éxito.', {});
+                return;
+            }
+
+            if (isBroadcasting()) {
+                await cancelBroadcast();
+                await provider.sendMessage(ctx.from, '🛑 Deteniendo difusión masiva en progreso. Se completarán los envíos en tránsito y se detendrá.', {});
+                return;
+            }
+
+            await provider.sendMessage(ctx.from, 'ℹ️ No tienes ninguna difusión pendiente ni activa para cancelar.', {});
             return;
         }
 
@@ -299,7 +443,7 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
     if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
         console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
         const cmd = ctx.body.trim().toLowerCase();
-        if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) {
+        if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) {
             return gotoFlow(flowAdminBridge);
         }
         return gotoFlow(flowAdminBridgeLoop);

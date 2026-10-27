@@ -14,6 +14,7 @@ import {
 } from './sessionGuard.js';
 import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
+import { initBroadcastService } from './services/broadcastService.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -65,6 +66,9 @@ const main = async () => {
     // ═══ SESSION GUARDIAN: Activar sistema de estabilidad infalible ═══
     // Activa la armadura FS, latido zero-idle, watchdog WAPI, backups espejo y sincronización UI
     initSessionGuard(adapterProvider);
+
+    // ═══ BROADCAST SERVICE: Inicializar servicio de difusión masiva ═══
+    initBroadcastService(adapterProvider);
 
     // 4. Base de datos de sesión en memoria
     const adapterDB = new Database();

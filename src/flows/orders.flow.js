@@ -14,7 +14,7 @@ export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
-            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
+            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
@@ -42,7 +42,7 @@ export const flowPedirNombre = addKeyword(EVENTS.ACTION)
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
-            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
+            if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);

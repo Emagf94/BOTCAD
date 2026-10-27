@@ -3,7 +3,7 @@ import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { 
   Bot, LogOut, FolderTree, Users, ShieldCheck,
-  Menu, ChevronRight, QrCode
+  Menu, ChevronRight, QrCode, Megaphone
 } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, user, sessionData, contactsCount }) {
@@ -41,6 +41,15 @@ export default function Navbar({ activeTab, setActiveTab, user, sessionData, con
       badgeColor: 'rgba(59, 130, 246, 0.15)',
       badgeTextColor: '#60a5fa',
       badgeBorder: '1px solid rgba(59, 130, 246, 0.3)'
+    },
+    {
+      id: 'broadcast',
+      label: 'Difusión Masiva',
+      icon: Megaphone,
+      badge: 'Estudio',
+      badgeColor: 'rgba(236, 72, 153, 0.15)',
+      badgeTextColor: '#f472b6',
+      badgeBorder: '1px solid rgba(236, 72, 153, 0.3)'
     },
     { id: 'prices', label: 'Catálogo & Categorías', icon: FolderTree, badge: 'Precios' },
     { id: 'advisors', label: 'Asesores & Permisos', icon: ShieldCheck, badge: 'Equipo' }

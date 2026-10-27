@@ -8,6 +8,7 @@ import ConnectionTab from './components/ConnectionTab';
 import ContactsTab from './components/ContactsTab';
 import PricesTab from './components/PricesTab';
 import AdvisorsTab from './components/AdvisorsTab';
+import BroadcastTab from './components/BroadcastTab';
 import { Bot, RefreshCw, AlertTriangle, QrCode } from 'lucide-react';
 
 export default function App() {
@@ -175,6 +176,7 @@ export default function App() {
         <main style={{ flex: 1, overflowX: 'hidden' }}>
           {activeTab === 'connection' && <ConnectionTab sessionData={sessionData} />}
           {activeTab === 'contacts' && <ContactsTab onCountUpdate={setContactsCount} />}
+          {activeTab === 'broadcast' && <BroadcastTab />}
           {activeTab === 'prices' && <PricesTab />}
           {activeTab === 'advisors' && <AdvisorsTab />}
         </main>

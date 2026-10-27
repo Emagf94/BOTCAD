@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 
 const firebaseConfig = {
     apiKey: "AIzaSyDwccRByP3nKr_PzSzpjvYocl9OwQv-j6I",
@@ -54,3 +54,22 @@ export const saveUser = async (phone, data) => {
         return false;
     }
 };
+
+/**
+ * Obtiene todos los usuarios registrados en la colección 'users'
+ * @returns {Promise<Array<Object>>} Lista de usuarios
+ */
+export const getAllUsers = async () => {
+    try {
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        const users = [];
+        querySnapshot.forEach((docSnap) => {
+            users.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        return users;
+    } catch (error) {
+        console.error('Error al obtener todos los usuarios de Firebase:', error);
+        return [];
+    }
+};
+
