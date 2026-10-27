@@ -428,7 +428,8 @@ const withTimeout = (promise, ms = 30000, operationName = 'Operación') => {
 /**
  * Aplica un parche en tiempo de ejecución al contexto de WhatsApp Web en Chromium
  * para corregir el bug de MediaPrep split (prepRawMedia movido a WAWebPrepRawMedia).
- * Esto previene el error crítico "Cannot read properties of undefined (reading 'prepRawMedia')".
+ * Esto previene el error crítico "Cannot read properties of undefined (reading 'prepRawMedia')"
+ * tanto en versiones antiguas como nuevas de WhatsApp Web y WA-JS.
  * @param {object} client Instancia de WPPConnect (Whatsapp o provider.vendor)
  * @returns {Promise<boolean>} true si el módulo MediaPrep está disponible y funcional
  */
@@ -442,34 +443,81 @@ export const patchWppMediaPrep = async (client) => {
             try {
                 if (!window.WPP || !window.WPP.whatsapp) return false;
 
-                const mediaPrep = window.WPP.whatsapp.MediaPrep;
-                if (!mediaPrep || typeof mediaPrep.prepRawMedia !== 'function') {
-                    let found = null;
-                    let legacy = null;
+                // 1. Buscar la función prepRawMedia en todas las fuentes posibles
+                let prepFn = null;
+                let legacy = null;
 
-                    if (typeof window.require === 'function') {
-                        try { found = window.require('WAWebPrepRawMedia'); } catch (e) {}
-                        try { legacy = window.require('WAWebMediaPrep'); } catch (e) {}
-                    }
+                if (typeof window.WPP.whatsapp.prepRawMedia === 'function') {
+                    prepFn = window.WPP.whatsapp.prepRawMedia;
+                } else if (window.WPP.whatsapp.functions && typeof window.WPP.whatsapp.functions.prepRawMedia === 'function') {
+                    prepFn = window.WPP.whatsapp.functions.prepRawMedia;
+                }
 
-                    if (found && (found.prepRawMedia || typeof found === 'function')) {
-                        const prepFn = found.prepRawMedia || found;
-                        const base = legacy || mediaPrep || {};
-                        const patchedModule = Object.assign({}, base, { prepRawMedia: prepFn });
+                if (!prepFn && typeof window.require === 'function') {
+                    try {
+                        const mPrepRaw = window.require('WAWebPrepRawMedia');
+                        if (mPrepRaw) prepFn = mPrepRaw.prepRawMedia || mPrepRaw.default?.prepRawMedia || (typeof mPrepRaw === 'function' ? mPrepRaw : null);
+                    } catch (e) {}
 
-                        try {
-                            Object.defineProperty(window.WPP.whatsapp, 'MediaPrep', {
-                                configurable: true,
-                                enumerable: true,
-                                writable: true,
-                                value: patchedModule
-                            });
-                        } catch (eDef) {
-                            window.WPP.whatsapp.MediaPrep = patchedModule;
+                    try {
+                        const mLegacy = window.require('WAWebMediaPrep');
+                        if (mLegacy) {
+                            legacy = mLegacy;
+                            if (!prepFn) prepFn = mLegacy.prepRawMedia || mLegacy.default?.prepRawMedia || null;
                         }
-                        return true;
+                    } catch (e) {}
+
+                    // Búsqueda exhaustiva en la tabla de módulos de Webpack si aún no se encontró
+                    if (!prepFn && window.require.c) {
+                        for (const modId in window.require.c) {
+                            const exp = window.require.c[modId]?.exports;
+                            if (!exp) continue;
+                            if (typeof exp.prepRawMedia === 'function') {
+                                prepFn = exp.prepRawMedia;
+                                break;
+                            }
+                            if (exp.default && typeof exp.default.prepRawMedia === 'function') {
+                                prepFn = exp.default.prepRawMedia;
+                                break;
+                            }
+                        }
                     }
                 }
+
+                // 2. Si encontramos prepFn, enlazarla en TODOS los puntos donde WA-JS la busca
+                if (prepFn) {
+                    // a) window.WPP.whatsapp.prepRawMedia
+                    try {
+                        window.WPP.whatsapp.prepRawMedia = prepFn;
+                    } catch (e) {}
+
+                    // b) window.WPP.whatsapp.functions.prepRawMedia
+                    try {
+                        window.WPP.whatsapp.functions = window.WPP.whatsapp.functions || {};
+                        window.WPP.whatsapp.functions.prepRawMedia = prepFn;
+                    } catch (e) {}
+
+                    // c) window.WPP.whatsapp.MediaPrep (para versiones de WA-JS que invocan MediaPrep.prepRawMedia)
+                    const base = legacy || window.WPP.whatsapp.MediaPrep || {};
+                    let targetObj = (typeof base === 'function' || typeof base === 'object') ? base : {};
+                    try {
+                        targetObj.prepRawMedia = prepFn;
+                        Object.defineProperty(window.WPP.whatsapp, 'MediaPrep', {
+                            configurable: true,
+                            enumerable: true,
+                            writable: true,
+                            value: targetObj
+                        });
+                    } catch (eDef) {
+                        try {
+                            window.WPP.whatsapp.MediaPrep = targetObj;
+                            window.WPP.whatsapp.MediaPrep.prepRawMedia = prepFn;
+                        } catch (e) {}
+                    }
+                    return true;
+                }
+
+                // Si MediaPrep ya tiene la función
                 return !!(window.WPP.whatsapp.MediaPrep && typeof window.WPP.whatsapp.MediaPrep.prepRawMedia === 'function');
             } catch (err) {
                 return false;

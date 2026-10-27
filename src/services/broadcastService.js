@@ -1,6 +1,7 @@
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, getAllUsers } from '../firebase.js';
 import { resolveClientRealPhone } from '../utils/helpers.js';
+import { getWppClient, patchWppMediaPrep } from '../utils/fileHandler.js';
 
 // ==========================================
 // ESTADO EN MEMORIA DEL SERVICIO DE DIFUSIÓN
@@ -191,6 +192,17 @@ export const startBroadcast = async ({
         const startTime = Date.now();
         const baseDelayMs = Math.max(4000, (delaySeconds || 7) * 1000);
 
+        // Asegurar que WhatsApp Web tenga inyectado el parche preventivo de MediaPrep antes de iniciar envíos
+        try {
+            const client = await getWppClient(provider);
+            if (client) {
+                const patched = await patchWppMediaPrep(client);
+                console.log(`🧩 [BroadcastService] Verificación de parche MediaPrep: ${patched ? 'ACTIVO' : 'NO_REQUERIDO'}`);
+            }
+        } catch (ePatch) {
+            console.warn('⚠️ [BroadcastService] Verificación de parche MediaPrep falló:', ePatch.message);
+        }
+
         for (let i = 0; i < finalRecipients.length; i++) {
             if (activeBroadcast.shouldCancel) {
                 console.log(`🛑 [BroadcastService] Envío masivo cancelado en el destinatario ${i + 1}/${totalCount}`);
@@ -221,7 +233,24 @@ export const startBroadcast = async ({
 
             try {
                 if (mediaTarget) {
-                    await provider.sendMessage(recipientJid, personalizedMessage, { media: mediaTarget });
+                    try {
+                        await provider.sendMessage(recipientJid, personalizedMessage, { media: mediaTarget });
+                    } catch (mediaErr) {
+                        console.warn(`⚠️ [BroadcastService] Error al enviar con imagen a ${displayPhone} (${mediaErr.message}). Reintentando con texto seguro...`);
+                        
+                        // Re-aplicar parche preventivo en caso de recarga de sesión de WhatsApp Web
+                        try {
+                            const client = await getWppClient(provider);
+                            if (client) await patchWppMediaPrep(client);
+                        } catch (_) {}
+
+                        // Fallback a solo texto (adjuntando enlace si era URL en la nube)
+                        let fallbackMessage = personalizedMessage;
+                        if (typeof mediaTarget === 'string' && mediaTarget.startsWith('http')) {
+                            fallbackMessage += `\n\n🖼️ *Flyer adjunto:* ${mediaTarget}`;
+                        }
+                        await provider.sendMessage(recipientJid, fallbackMessage, {});
+                    }
                 } else {
                     await provider.sendMessage(recipientJid, personalizedMessage, {});
                 }
