@@ -1,5 +1,6 @@
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, getAllUsers } from '../firebase.js';
+import { resolveClientRealPhone } from '../utils/helpers.js';
 
 // ==========================================
 // ESTADO EN MEMORIA DEL SERVICIO DE DIFUSIÓN
@@ -17,18 +18,17 @@ export const pendingAdminCampaign = new Map();
 
 /**
  * Normaliza cualquier número o JID a formato estándar de WhatsApp (@c.us)
- * @param {string} phone 
+ * evitando el uso accidental de LIDs.
+ * @param {string|object} phone 
  * @returns {string|null}
  */
 export const normalizeRecipientJid = (phone) => {
     if (!phone) return null;
-    let digits = String(phone).replace(/[^0-9]/g, '');
-    if (!digits) return null;
-    // Si tiene 10 dígitos (Colombia sin prefijo país), añadir 57
-    if (digits.length === 10) {
-        digits = '57' + digits;
+    const resolved = resolveClientRealPhone(phone);
+    if (resolved.isValid && resolved.jid) {
+        return resolved.jid;
     }
-    return `${digits}@c.us`;
+    return null;
 };
 
 /**
@@ -41,7 +41,8 @@ export const normalizeRecipientJid = (phone) => {
 export const interpolateVariables = (template, client = {}) => {
     if (!template) return '';
     const name = (client.name || 'Cliente').trim();
-    const phone = (client.phone || client.id || '').trim();
+    const resolved = resolveClientRealPhone(client);
+    const phone = resolved.isValid ? resolved.rawDigits : (client.phone || client.id || '').trim();
     const contactUser = (client.contactUser || client.name || 'Cliente').trim();
     const empresa = 'CAD Impresiones';
     const botName = 'Cadi';
@@ -197,21 +198,25 @@ export const startBroadcast = async ({
             }
 
             const recipient = finalRecipients[i];
-            const recipientPhone = recipient.phone || recipient.id;
-            const recipientJid = normalizeRecipientJid(recipientPhone);
+            const resolved = resolveClientRealPhone(recipient);
 
-            if (!recipientJid) {
+            if (!resolved.isValid || !resolved.jid) {
                 activeBroadcast.failed++;
+                const failDisplay = resolved.displayPhone || recipient.phone || recipient.id || 'N/A';
+                const failReason = resolved.reason || 'Sin número telefónico válido';
                 activeBroadcast.logs.unshift({
                     time: new Date().toLocaleTimeString('es-CO'),
-                    name: recipient.name || 'Sin nombre',
-                    phone: recipientPhone || 'N/A',
+                    name: recipient.name || 'Cliente',
+                    phone: failDisplay,
                     status: 'ERROR',
-                    error: 'Teléfono inválido'
+                    error: failReason
                 });
+                console.warn(`⚠️ [BroadcastService] [${i + 1}/${totalCount}] Omitido ${recipient.name || 'Cliente'} (${failDisplay}): ${failReason}`);
                 continue;
             }
 
+            const recipientJid = resolved.jid;
+            const displayPhone = resolved.displayPhone;
             const personalizedMessage = interpolateVariables(template, recipient);
 
             try {
@@ -225,20 +230,20 @@ export const startBroadcast = async ({
                 activeBroadcast.logs.unshift({
                     time: new Date().toLocaleTimeString('es-CO'),
                     name: recipient.name || 'Cliente',
-                    phone: recipientPhone,
+                    phone: displayPhone,
                     status: 'SUCCESS'
                 });
-                console.log(`📤 [BroadcastService] [${i + 1}/${totalCount}] Enviado a ${recipient.name || 'Cliente'} (${recipientPhone})`);
+                console.log(`📤 [BroadcastService] [${i + 1}/${totalCount}] Enviado a ${recipient.name || 'Cliente'} (${displayPhone})`);
             } catch (err) {
                 activeBroadcast.failed++;
                 activeBroadcast.logs.unshift({
                     time: new Date().toLocaleTimeString('es-CO'),
                     name: recipient.name || 'Cliente',
-                    phone: recipientPhone,
+                    phone: displayPhone,
                     status: 'ERROR',
                     error: err.message
                 });
-                console.warn(`⚠️ [BroadcastService] Falló envío a ${recipientPhone}: ${err.message}`);
+                console.warn(`⚠️ [BroadcastService] Falló envío a ${displayPhone}: ${err.message}`);
             }
 
             // Sincronizar progreso en Firestore

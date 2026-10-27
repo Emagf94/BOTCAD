@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, onSnapshot, query, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { resolveClientPhone } from '../utils/phoneUtils';
 import {
   Megaphone, Users, Smartphone, Send, AlertTriangle, CheckCircle2,
   Clock, Sparkles, RefreshCw, Square, Image, FileText,
@@ -84,12 +85,31 @@ export default function BroadcastTab() {
     return () => unsub();
   }, []);
 
-  // Filtrado de audiencia según opción seleccionada
+  // Enriquecer contactos con resolución de teléfono real y detectar elegibilidad
+  const enrichedContacts = useMemo(() => {
+    return contacts.map(c => {
+      const resolved = resolveClientPhone(c);
+      return {
+        ...c,
+        resolvedPhone: resolved
+      };
+    });
+  }, [contacts]);
+
+  const eligibleContacts = useMemo(() => {
+    return enrichedContacts.filter(c => c.resolvedPhone.isValid);
+  }, [enrichedContacts]);
+
+  const ineligibleContacts = useMemo(() => {
+    return enrichedContacts.filter(c => !c.resolvedPhone.isValid);
+  }, [enrichedContacts]);
+
+  // Filtrado de audiencia según opción seleccionada (solo contactos con teléfono celular válido)
   const filteredRecipients = useMemo(() => {
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
 
-    let list = contacts.filter(c => c.phone || c.id);
+    let list = eligibleContacts;
 
     if (filterAudience === 'withName') {
       list = list.filter(c => c.name && c.name.trim() !== '' && c.name.trim().toLowerCase() !== 'cliente');
@@ -100,7 +120,7 @@ export default function BroadcastTab() {
       });
     } else if (filterAudience === 'manual') {
       if (selectedPhones.size > 0) {
-        list = list.filter(c => selectedPhones.has(c.phone || c.id));
+        list = list.filter(c => selectedPhones.has(c.id) || selectedPhones.has(c.resolvedPhone.formattedPhone));
       }
     }
 
@@ -108,25 +128,34 @@ export default function BroadcastTab() {
       const term = searchTerm.toLowerCase();
       list = list.filter(c =>
         (c.name || '').toLowerCase().includes(term) ||
-        (c.phone || c.id || '').includes(term) ||
+        (c.resolvedPhone.formattedPhone || '').includes(term) ||
+        (c.resolvedPhone.displayPhone || '').toLowerCase().includes(term) ||
         (c.contactUser || '').toLowerCase().includes(term)
       );
     }
 
     return list;
-  }, [contacts, filterAudience, selectedPhones, searchTerm]);
+  }, [eligibleContacts, filterAudience, selectedPhones, searchTerm]);
 
   // Cliente de ejemplo para vista previa en vivo
   const sampleClient = useMemo(() => {
-    if (filteredRecipients.length > 0) return filteredRecipients[0];
-    return { name: 'Carlos Mendoza', phone: '573184849332', contactUser: 'cmendoza_cad' };
+    if (filteredRecipients.length > 0) {
+      const sample = filteredRecipients[0];
+      return {
+        name: sample.name || 'Cliente',
+        phone: sample.resolvedPhone.displayPhone,
+        rawPhone: sample.resolvedPhone.formattedPhone,
+        contactUser: sample.contactUser || sample.name || 'Cliente'
+      };
+    }
+    return { name: 'Carlos Mendoza', phone: '+57 318 484 9332', rawPhone: '573184849332', contactUser: 'cmendoza_cad' };
   }, [filteredRecipients]);
 
   // Mensaje interpolado en vivo para el simulador de smartphone
   const livePreviewMessage = useMemo(() => {
     if (!messageTemplate) return '';
     const name = sampleClient.name || 'Carlos Mendoza';
-    const phone = sampleClient.phone || '573184849332';
+    const phone = sampleClient.phone || '+57 318 484 9332';
     const contactUser = sampleClient.contactUser || name;
     return messageTemplate
       .replace(/\{name\}/gi, name)
@@ -198,7 +227,9 @@ export default function BroadcastTab() {
     try {
       const recipientPayload = filteredRecipients.map(c => ({
         id: c.id,
-        phone: c.phone || c.id,
+        phone: c.resolvedPhone?.formattedPhone || c.realPhone || c.phone || c.id,
+        realPhone: c.resolvedPhone?.formattedPhone || c.realPhone || '',
+        displayPhone: c.resolvedPhone?.displayPhone || '',
         name: c.name || 'Cliente',
         contactUser: c.contactUser || ''
       }));
@@ -568,7 +599,7 @@ export default function BroadcastTab() {
             </div>
 
             {/* Filter buttons */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
               <button
                 type="button"
                 onClick={() => setFilterAudience('all')}
@@ -583,7 +614,7 @@ export default function BroadcastTab() {
                   cursor: 'pointer'
                 }}
               >
-                Todos ({contacts.length})
+                Todos con Teléfono ({eligibleContacts.length})
               </button>
               <button
                 type="button"
@@ -633,6 +664,11 @@ export default function BroadcastTab() {
               >
                 Selección Manual {selectedPhones.size > 0 ? `(${selectedPhones.size})` : ''}
               </button>
+              {ineligibleContacts.length > 0 && (
+                <span style={{ fontSize: '0.75rem', color: '#f87171', marginLeft: 'auto' }}>
+                  ℹ️ {ineligibleContacts.length} contactos sin celular excluidos
+                </span>
+              )}
             </div>
 
             {/* Manual contact picker modal list if manual */}
@@ -660,23 +696,23 @@ export default function BroadcastTab() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (selectedPhones.size === contacts.length) setSelectedPhones(new Set());
-                      else setSelectedPhones(new Set(contacts.map(c => c.phone || c.id)));
+                      if (selectedPhones.size === eligibleContacts.length) setSelectedPhones(new Set());
+                      else setSelectedPhones(new Set(eligibleContacts.map(c => c.id)));
                     }}
                     className="btn btn-secondary"
                     style={{ fontSize: '0.78rem', padding: '0 10px', height: '34px' }}
                   >
-                    {selectedPhones.size === contacts.length ? 'Deseleccionar' : 'Todos'}
+                    {selectedPhones.size === eligibleContacts.length ? 'Deseleccionar' : 'Todos'}
                   </button>
                 </div>
 
-                <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {contacts.map((c) => {
-                    const phone = c.phone || c.id;
-                    const isChecked = selectedPhones.has(phone);
+                <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {enrichedContacts.map((c) => {
+                    const isChecked = selectedPhones.has(c.id);
+                    const isEligible = c.resolvedPhone.isValid;
                     return (
                       <label
-                        key={phone}
+                        key={c.id}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -684,17 +720,26 @@ export default function BroadcastTab() {
                           padding: '6px 10px',
                           borderRadius: '6px',
                           background: isChecked ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                          cursor: 'pointer',
+                          cursor: isEligible ? 'pointer' : 'not-allowed',
+                          opacity: isEligible ? 1 : 0.45,
                           fontSize: '0.82rem'
                         }}
                       >
                         <input
                           type="checkbox"
+                          disabled={!isEligible}
                           checked={isChecked}
-                          onChange={() => toggleSelectPhone(phone)}
+                          onChange={() => isEligible && toggleSelectPhone(c.id)}
                         />
                         <span style={{ fontWeight: 600, color: '#f8fafc' }}>{c.name || 'Sin nombre'}</span>
-                        <span style={{ color: 'var(--text-muted)' }}>({phone})</span>
+                        <span style={{ color: isEligible ? '#93c5fd' : 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                          {c.resolvedPhone.displayPhone}
+                        </span>
+                        {!isEligible && (
+                          <span style={{ fontSize: '0.72rem', color: '#fca5a5', fontStyle: 'italic' }}>
+                            (Sin celular registrado)
+                          </span>
+                        )}
                       </label>
                     );
                   })}

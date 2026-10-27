@@ -15,7 +15,8 @@ import {
     extractCloudLinks,
     safeSendLogo,
     safeSendSticker,
-    getWppClient
+    getWppClient,
+    resolveClientRealPhone
 } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop, flowAsesor, clientBridgeCapture, flowAdminInitiatedClientBridge } from './admin.flow.js';
 import { flowEnvioDirectoArchivos, flowPagosFAQ, flowFAQ } from './faq.flow.js';
@@ -268,8 +269,17 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
         const phone = ctx.from.split('@')[0];
         const name = state.getMyState()?.userName || '';
 
-        await saveUser(phone, { name, contactUser: contactUser });
-        await state.update({ contactUser: contactUser });
+        const phoneResolved = resolveClientRealPhone(contactUser);
+        const userData = {
+            name,
+            contactUser: contactUser
+        };
+        if (phoneResolved.isValid) {
+            userData.realPhone = phoneResolved.formattedPhone;
+        }
+
+        await saveUser(phone, userData);
+        await state.update({ contactUser: contactUser, realPhone: userData.realPhone || '' });
 
         return gotoFlow(flowWelcomeRegistered);
     });

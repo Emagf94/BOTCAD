@@ -16,7 +16,8 @@ import {
     normalizeAdminJids,
     getWppClient,
     getCustomerDisplayInfo,
-    getAdvisorName
+    getAdvisorName,
+    resolveClientRealPhone
 } from '../utils/helpers.js';
 import {
     startBroadcast,
@@ -261,10 +262,25 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
             }
 
             const allUsers = await getAllUsers();
-            const validRecipients = allUsers.filter(u => u.phone || u.id);
+            const validRecipients = [];
+            let skippedCount = 0;
+
+            for (const u of allUsers) {
+                const res = resolveClientRealPhone(u);
+                if (res.isValid) {
+                    validRecipients.push({
+                        ...u,
+                        realPhone: res.formattedPhone,
+                        displayPhone: res.displayPhone,
+                        recipientJid: res.jid
+                    });
+                } else {
+                    skippedCount++;
+                }
+            }
 
             if (validRecipients.length === 0) {
-                await provider.sendMessage(ctx.from, '⚠️ No se encontraron clientes registrados en la base de datos de usuarios.', {});
+                await provider.sendMessage(ctx.from, '⚠️ No se encontraron clientes con número telefónico válido en la base de datos de usuarios.', {});
                 return;
             }
 
@@ -280,16 +296,21 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
                 createdAt: Date.now()
             });
 
+            const skippedNotice = skippedCount > 0
+                ? `ℹ️ _(${skippedCount} contacto(s) omitidos por no tener número celular registrado, ej. solo @usuario)_\n`
+                : '';
+
             const previewMsg = `📢 *VISTA PREVIA DE DIFUSIÓN MASIVA*\n\n` +
-                `👥 *Destinatarios:* ${validRecipients.length} clientes registrados\n` +
+                `👥 *Destinatarios válidos:* ${validRecipients.length} clientes con teléfono celular\n` +
+                skippedNotice +
                 `⏱️ *Intervalo seguro:* 6 a 9 seg (Protección Anti-Ban)\n` +
                 `⏳ *Tiempo estimado:* ~${estMinutes} minuto(s)\n` +
                 `${mediaPath ? '🖼️ *Adjunto:* Imagen flyer lista para enviar ✅\n' : ''}` +
                 `══════════════════════════════\n` +
-                `📱 *Mensaje de muestra para:* ${sampleUser.name || 'Cliente'} (${sampleUser.phone || sampleUser.id})\n\n` +
+                `📱 *Mensaje de muestra para:* ${sampleUser.name || 'Cliente'} (${sampleUser.displayPhone || sampleUser.realPhone || sampleUser.phone})\n\n` +
                 `${sampleMsg}\n` +
                 `══════════════════════════════\n\n` +
-                `⚠️ *¿Confirmas el envío a todos los ${validRecipients.length} clientes?*\n` +
+                `⚠️ *¿Confirmas el envío a los ${validRecipients.length} clientes?*\n` +
                 `👉 Escribe *!confirmar* para iniciar el envío.\n` +
                 `👉 Escribe *!cancelar* para descartar la campaña.`;
 

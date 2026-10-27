@@ -1,6 +1,6 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
 import { saveUser } from '../firebase.js';
-import { isAdmin, validateContactUser, validateName, formatName } from '../utils/helpers.js';
+import { isAdmin, validateContactUser, validateName, formatName, resolveClientRealPhone } from '../utils/helpers.js';
 import { flowAdminBridge, flowAdminBridgeLoop } from './admin.flow.js';
 import { flowCancelar, flowInactividad } from './main.flow.js';
 import { flowRecibirArchivos } from './files.flow.js';
@@ -27,12 +27,19 @@ export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
             return fallBack(errorMsg);
         }
 
-        await state.update({ telefono: contactUser, contactUser: contactUser });
+        const phoneResolved = resolveClientRealPhone(contactUser);
+        const realPhone = phoneResolved.isValid ? phoneResolved.formattedPhone : '';
+
+        await state.update({ telefono: contactUser, contactUser: contactUser, realPhone });
         
         // Guardar en Firebase para futuras ocasiones
         const phone = ctx.from.split('@')[0];
         const name = state.getMyState()?.nombrePedido || state.getMyState()?.userName || '';
-        await saveUser(phone, { name, contactUser });
+        const userData = { name, contactUser };
+        if (realPhone) {
+            userData.realPhone = realPhone;
+        }
+        await saveUser(phone, userData);
         
         return gotoFlow(flowRecibirArchivos);
     });

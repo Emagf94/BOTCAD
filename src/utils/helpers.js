@@ -457,6 +457,108 @@ export const isAdmin = (fromOrCtx) => {
 };
 
 /**
+ * Extrae y valida el número telefónico celular real de un cliente.
+ * Detecta números colombianos (10 dígitos o 12 con prefijo 57), limpia textos
+ * y diferencia claramente entre un teléfono real y un LID (14-16 dígitos) o un @usuario.
+ * 
+ * @param {Object|string} client Objeto de cliente de Firestore o string con teléfono/LID
+ * @returns {{
+ *   isValid: boolean,
+ *   rawDigits: string,
+ *   formattedPhone: string,
+ *   jid: string|null,
+ *   displayPhone: string,
+ *   reason?: string
+ * }}
+ */
+export const resolveClientRealPhone = (client) => {
+    if (!client) {
+        return { isValid: false, rawDigits: '', formattedPhone: '', jid: null, displayPhone: 'Sin contacto', reason: 'Dato vacío' };
+    }
+
+    let realPhoneCandidate = '';
+    let contactUserCandidate = '';
+    let phoneCandidate = '';
+    let idCandidate = '';
+
+    if (typeof client === 'object') {
+        realPhoneCandidate = String(client.realPhone || '').trim();
+        contactUserCandidate = String(client.contactUser || '').trim();
+        phoneCandidate = String(client.phone || '').trim();
+        idCandidate = String(client.id || '').trim();
+    } else if (typeof client === 'string') {
+        contactUserCandidate = client.trim();
+    }
+
+    const evaluateDigits = (candidateStr) => {
+        if (!candidateStr) return null;
+        if (candidateStr.startsWith('@')) {
+            const digits = candidateStr.replace(/\D/g, '');
+            if (digits.length < 10) return null;
+        }
+
+        const digits = candidateStr.replace(/\D/g, '');
+        // Teléfono colombiano estándar móvil: 10 dígitos (ej. 3001234567) o 12 dígitos con código de país (573001234567)
+        // Los LIDs de WhatsApp tienen 14 o más dígitos (normalmente 15 o 16)
+        if (digits.length >= 10 && digits.length <= 13) {
+            let normalized = digits;
+            if (digits.length === 10) {
+                normalized = '57' + digits;
+            }
+            return {
+                rawDigits: digits,
+                normalized: normalized
+            };
+        } else if (digits.length >= 7 && digits.length <= 9) {
+            return {
+                rawDigits: digits,
+                normalized: '57' + digits
+            };
+        }
+        return null;
+    };
+
+    let match = evaluateDigits(realPhoneCandidate);
+    if (!match) {
+        match = evaluateDigits(contactUserCandidate);
+    }
+    if (!match && phoneCandidate.replace(/\D/g, '').length <= 13) {
+        match = evaluateDigits(phoneCandidate);
+    }
+    if (!match && idCandidate.replace(/\D/g, '').length <= 13) {
+        match = evaluateDigits(idCandidate);
+    }
+
+    if (match) {
+        let display = `+${match.normalized}`;
+        if (match.normalized.startsWith('57') && match.normalized.length === 12) {
+            const p = match.normalized;
+            display = `+57 ${p.slice(2, 5)} ${p.slice(5, 8)} ${p.slice(8)}`;
+        }
+        return {
+            isValid: true,
+            rawDigits: match.rawDigits,
+            formattedPhone: match.normalized,
+            jid: `${match.normalized}@c.us`,
+            displayPhone: display
+        };
+    }
+
+    const isOnlyHandle = contactUserCandidate.startsWith('@') || (typeof client === 'object' && client.contactUser?.startsWith('@'));
+    const reason = isOnlyHandle ? 'Sin número celular registrado (solo @usuario)' : 'Sin número celular válido (LID sin teléfono)';
+    const displayPhone = isOnlyHandle ? contactUserCandidate : (contactUserCandidate || 'Sin teléfono');
+
+    return {
+        isValid: false,
+        rawDigits: '',
+        formattedPhone: '',
+        jid: null,
+        displayPhone: displayPhone,
+        reason: reason
+    };
+};
+
+/**
  * Obtiene el nombre y teléfono real formateado de un cliente desde la base de datos o contexto.
  * Evita mostrar LIDs de WhatsApp (como 100923527413828) y no incluye enlaces wa.me.
  * @param {string|object} fromOrId JID, teléfono, LID o contexto del cliente
@@ -476,11 +578,11 @@ export const getCustomerDisplayInfo = async (fromOrId) => {
     const cleanDigits = rawId.replace(/\D/g, '');
 
     let dbName = '';
-    let dbPhone = '';
+    let userDoc = null;
 
     // 1. Intentar consultar en Firestore con el ID exacto
     try {
-        let userDoc = await getUser(rawId);
+        userDoc = await getUser(rawId);
         if (!userDoc && cleanDigits && cleanDigits !== rawId) {
             userDoc = await getUser(cleanDigits);
         }
@@ -489,24 +591,27 @@ export const getCustomerDisplayInfo = async (fromOrId) => {
             userDoc = await getUser(cleanDigits.substring(2));
         }
 
-        if (userDoc) {
-            if (userDoc.name) dbName = String(userDoc.name).trim();
-            if (userDoc.contactUser) dbPhone = String(userDoc.contactUser).trim();
-            else if (userDoc.phone && String(userDoc.phone).replace(/\D/g, '').length <= 12) {
-                dbPhone = String(userDoc.phone).trim();
-            }
+        if (userDoc && userDoc.name) {
+            dbName = String(userDoc.name).trim();
         }
     } catch (e) {
         console.warn(`⚠️ [getCustomerDisplayInfo] Error al consultar usuario para ${rawId}:`, e.message);
     }
 
-    // 2. Determinar el teléfono limpio a mostrar
-    let finalPhone = dbPhone;
-    if (!finalPhone) {
-        if (cleanDigits.length <= 12 && cleanDigits.length >= 7) {
-            finalPhone = cleanDigits;
+    // 2. Determinar el teléfono limpio a mostrar mediante resolveClientRealPhone
+    let finalPhone = '';
+    if (userDoc) {
+        const resolved = resolveClientRealPhone(userDoc);
+        if (resolved.isValid) {
+            finalPhone = resolved.displayPhone;
         } else {
-            // Si es un LID largo y no hay contactUser en DB, mostrar el ID limpio
+            finalPhone = userDoc.contactUser || userDoc.phone || rawId;
+        }
+    } else {
+        const resolved = resolveClientRealPhone(rawId);
+        if (resolved.isValid) {
+            finalPhone = resolved.displayPhone;
+        } else {
             finalPhone = rawId;
         }
     }

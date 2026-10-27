@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { resolveClientPhone } from '../utils/phoneUtils';
 import {
   Users, Search, RefreshCw, MessageCircle, Phone, Calendar,
   UserPlus, Edit3, Trash2, X, Check, Copy, Download,
@@ -100,11 +101,13 @@ export default function ContactsTab({ onCountUpdate }) {
       // Filtro de búsqueda textual
       if (!search) return true;
       const name = (contact.name || '').toLowerCase();
-      const phone = String(contact.phone || contact.id || '').toLowerCase();
+      const resolved = resolveClientPhone(contact);
+      const phone = String(resolved.formattedPhone || contact.phone || contact.id || '').toLowerCase();
+      const displayPhone = String(resolved.displayPhone || '').toLowerCase();
       const contactUser = (contact.contactUser || '').toLowerCase();
       const notes = (contact.notes || '').toLowerCase();
 
-      return name.includes(search) || phone.includes(search) || contactUser.includes(search) || notes.includes(search);
+      return name.includes(search) || phone.includes(search) || displayPhone.includes(search) || contactUser.includes(search) || notes.includes(search);
     });
   }, [contacts, searchTerm, activeFilter]);
 
@@ -134,10 +137,11 @@ export default function ContactsTab({ onCountUpdate }) {
   const handleOpenEditModal = (contact) => {
     setIsEditing(true);
     setEditingId(contact.id);
+    const resolved = resolveClientPhone(contact);
     setFormData({
       name: contact.name || '',
-      phone: contact.phone || contact.id || '',
-      contactUser: contact.contactUser || '',
+      phone: resolved.isValid ? resolved.rawDigits : (contact.phone || contact.id || ''),
+      contactUser: resolved.isOnlyHandle ? (contact.contactUser || '') : (contact.contactUser && !contact.contactUser.match(/^\d+$/) ? contact.contactUser : ''),
       notes: contact.notes || ''
     });
     setSaveError('');
@@ -163,9 +167,11 @@ export default function ContactsTab({ onCountUpdate }) {
     setSaveError('');
 
     try {
+      const resolved = resolveClientPhone({ phone: cleanPhone, contactUser: formData.contactUser });
       const docData = {
         name: formData.name.trim(),
         phone: cleanPhone,
+        realPhone: resolved.isValid ? resolved.formattedPhone : cleanPhone,
         contactUser: (formData.contactUser || '').trim(),
         notes: (formData.notes || '').trim(),
         updatedAt: new Date()
@@ -210,14 +216,18 @@ export default function ContactsTab({ onCountUpdate }) {
   // Exportar a archivo CSV para Excel
   const handleExportCSV = () => {
     if (contacts.length === 0) return;
-    const headers = ['Nombre', 'Teléfono', 'Usuario Adicional', 'Notas / Observaciones', 'Última Interacción'];
-    const rows = contacts.map(c => [
-      `"${(c.name || '').replace(/"/g, '""')}"`,
-      `"${c.phone || c.id || ''}"`,
-      `"${(c.contactUser || '').replace(/"/g, '""')}"`,
-      `"${(c.notes || '').replace(/"/g, '""')}"`,
-      `"${c.updatedAt?.seconds ? new Date(c.updatedAt.seconds * 1000).toLocaleString() : ''}"`
-    ]);
+    const headers = ['Nombre', 'Teléfono Celular', 'LID / ID WhatsApp', 'Usuario Adicional', 'Notas / Observaciones', 'Última Interacción'];
+    const rows = contacts.map(c => {
+      const resolved = resolveClientPhone(c);
+      return [
+        `"${(c.name || '').replace(/"/g, '""')}"`,
+        `"${resolved.isValid ? resolved.formattedPhone : ''}"`,
+        `"${c.id || c.phone || ''}"`,
+        `"${(c.contactUser || '').replace(/"/g, '""')}"`,
+        `"${(c.notes || '').replace(/"/g, '""')}"`,
+        `"${c.updatedAt?.seconds ? new Date(c.updatedAt.seconds * 1000).toLocaleString() : ''}"`
+      ];
+    });
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
@@ -600,40 +610,75 @@ export default function ContactsTab({ onCountUpdate }) {
 
                     {/* Teléfono con Copiado Rápido */}
                     <td style={{ padding: '16px 20px', color: 'var(--text-main)', fontSize: '0.88rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Phone size={14} color="var(--text-dim)" />
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
-                          +{contact.phone || contact.id}
-                        </span>
-                        <button
-                          onClick={() => handleCopyPhone(contact.phone || contact.id, contact.id)}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: copiedId === contact.id ? '#34d399' : 'var(--text-dim)',
-                            cursor: 'pointer',
-                            padding: '3px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            borderRadius: '4px',
-                            transition: 'color 0.2s'
-                          }}
-                          title="Copiar número"
-                        >
-                          {copiedId === contact.id ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
-                      </div>
+                      {(() => {
+                        const resolved = resolveClientPhone(contact);
+                        const isLidDoc = String(contact.id).replace(/\D/g, '').length >= 14;
+                        if (resolved.isValid) {
+                          return (
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Phone size={14} color="#34d399" />
+                                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#f8fafc' }}>
+                                  {resolved.displayPhone}
+                                </span>
+                                <button
+                                  onClick={() => handleCopyPhone(resolved.rawDigits, contact.id)}
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: copiedId === contact.id ? '#34d399' : 'var(--text-dim)',
+                                    cursor: 'pointer',
+                                    padding: '3px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    borderRadius: '4px',
+                                    transition: 'color 0.2s'
+                                  }}
+                                  title="Copiar número"
+                                >
+                                  {copiedId === contact.id ? <Check size={14} /> : <Copy size={14} />}
+                                </button>
+                              </div>
+                              {isLidDoc && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                                  LID: {contact.id}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#fca5a5' }}>
+                                <AlertTriangle size={14} color="#f87171" />
+                                <span style={{ fontSize: '0.82rem', fontStyle: 'italic' }}>
+                                  Sin teléfono celular
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                                LID: {contact.id}
+                              </div>
+                            </div>
+                          );
+                        }
+                      })()}
                     </td>
 
                     {/* Usuario Adicional */}
                     <td style={{ padding: '16px 20px', color: 'var(--text-main)', fontSize: '0.88rem' }}>
-                      {contact.contactUser ? (
-                        <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
-                          {contact.contactUser.startsWith('@') ? contact.contactUser : `@${contact.contactUser}`}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>-</span>
-                      )}
+                      {(() => {
+                        const contactUser = (contact.contactUser || '').trim();
+                        const isPhoneDigitsOnly = contactUser && contactUser.replace(/\D/g, '').length >= 10 && !contactUser.startsWith('@');
+                        
+                        if (contactUser && !isPhoneDigitsOnly) {
+                          return (
+                            <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                              {contactUser.startsWith('@') ? contactUser : `@${contactUser}`}
+                            </span>
+                          );
+                        }
+                        return <span style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>-</span>;
+                      })()}
                     </td>
 
                     {/* Notas / Observaciones */}
