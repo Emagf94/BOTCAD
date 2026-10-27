@@ -6,7 +6,7 @@ import {
   Menu, ChevronRight, QrCode
 } from 'lucide-react';
 
-export default function Navbar({ activeTab, setActiveTab, user, sessionData }) {
+export default function Navbar({ activeTab, setActiveTab, user, sessionData, contactsCount }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = async () => {
@@ -33,7 +33,15 @@ export default function Navbar({ activeTab, setActiveTab, user, sessionData }) {
       showDot: true,
       dotClass: isConnected ? 'pulse-dot' : (isRequiresAuth ? 'pulse-dot-red' : 'pulse-dot-amber')
     },
-    { id: 'contacts', label: 'Lista de Contactos', icon: Users, badge: 'Clientes' },
+    {
+      id: 'contacts',
+      label: 'Lista de Contactos',
+      icon: Users,
+      badge: contactsCount > 0 ? `${contactsCount} Clientes` : 'Clientes',
+      badgeColor: 'rgba(59, 130, 246, 0.15)',
+      badgeTextColor: '#60a5fa',
+      badgeBorder: '1px solid rgba(59, 130, 246, 0.3)'
+    },
     { id: 'prices', label: 'Catálogo & Categorías', icon: FolderTree, badge: 'Precios' },
     { id: 'advisors', label: 'Asesores & Permisos', icon: ShieldCheck, badge: 'Equipo' }
   ];
