@@ -300,12 +300,24 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
                 ? `ℹ️ _(${skippedCount} contacto(s) omitidos por no tener número celular registrado, ej. solo @usuario)_\n`
                 : '';
 
+            let mediaNotice = '';
+            if (mediaPath) {
+                const lower = mediaPath.toLowerCase();
+                if (lower.endsWith('.mp4') || lower.endsWith('.webm') || lower.endsWith('.mov') || lower.endsWith('.m4v')) {
+                    mediaNotice = '🎬 *Adjunto:* Video corto listo para enviar ✅\n';
+                } else if (lower.endsWith('.gif')) {
+                    mediaNotice = '✨ *Adjunto:* GIF animado listo para enviar ✅\n';
+                } else {
+                    mediaNotice = '🖼️ *Adjunto:* Imagen flyer lista para enviar ✅\n';
+                }
+            }
+
             const previewMsg = `📢 *VISTA PREVIA DE DIFUSIÓN MASIVA*\n\n` +
                 `👥 *Destinatarios válidos:* ${validRecipients.length} clientes con teléfono celular\n` +
                 skippedNotice +
                 `⏱️ *Intervalo seguro:* 6 a 9 seg (Protección Anti-Ban)\n` +
                 `⏳ *Tiempo estimado:* ~${estMinutes} minuto(s)\n` +
-                `${mediaPath ? '🖼️ *Adjunto:* Imagen flyer lista para enviar ✅\n' : ''}` +
+                mediaNotice +
                 `══════════════════════════════\n` +
                 `📱 *Mensaje de muestra para:* ${sampleUser.name || 'Cliente'} (${sampleUser.displayPhone || sampleUser.realPhone || sampleUser.phone})\n\n` +
                 `${sampleMsg}\n` +

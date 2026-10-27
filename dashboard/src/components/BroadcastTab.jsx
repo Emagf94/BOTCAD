@@ -5,8 +5,28 @@ import { resolveClientPhone } from '../utils/phoneUtils';
 import {
   Megaphone, Users, Smartphone, Send, AlertTriangle, CheckCircle2,
   Clock, Sparkles, RefreshCw, Square, Image, FileText,
-  ShieldCheck, Search, Trash2, X
+  ShieldCheck, Search, Trash2, X, Video, Film
 } from 'lucide-react';
+
+/**
+ * Detecta si una URL corresponde a un video, GIF animado o imagen estática
+ * @param {string} url
+ * @returns {'video' | 'gif' | 'image' | 'none'}
+ */
+export const detectMediaType = (url) => {
+  if (!url || typeof url !== 'string' || !url.trim()) return 'none';
+  const clean = url.split('?')[0].toLowerCase().trim();
+  if (clean.endsWith('.mp4') || clean.endsWith('.webm') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.includes('/video/')) {
+    return 'video';
+  }
+  if (clean.endsWith('.gif') || clean.includes('image/gif')) {
+    return 'gif';
+  }
+  if (clean.endsWith('.jpg') || clean.endsWith('.jpeg') || clean.endsWith('.png') || clean.endsWith('.webp') || clean.endsWith('.svg')) {
+    return 'image';
+  }
+  return url.startsWith('http') ? 'image' : 'none';
+};
 
 const PRESET_TEMPLATES = [
   {
@@ -48,6 +68,9 @@ export default function BroadcastTab() {
   const [filterAudience, setFilterAudience] = useState('all'); // all | withName | recent | manual
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPhones, setSelectedPhones] = useState(new Set());
+
+  // Tipo de archivo multimedia detectado
+  const detectedMediaType = useMemo(() => detectMediaType(mediaUrl), [mediaUrl]);
 
   // Modal confirmación
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
@@ -938,16 +961,42 @@ export default function BroadcastTab() {
               </div>
             </div>
 
-            {/* Section 3: Imagen / Flyer Adjunto (Opcional) */}
+            {/* Section 3: Multimedia Adjunta: Imagen, GIF o Video corto (Opcional) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Image size={15} color="#ec4899" />
-                URL de Imagen / Flyer Promocional (Opcional):
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {detectedMediaType === 'video' ? (
+                    <Video size={15} color="#c084fc" />
+                  ) : detectedMediaType === 'gif' ? (
+                    <Sparkles size={15} color="#fbbf24" />
+                  ) : (
+                    <Image size={15} color="#ec4899" />
+                  )}
+                  Multimedia Promocional (Imagen, GIF o Video corto - Opcional):
+                </label>
+
+                {/* Formato Detectado Badge */}
+                {detectedMediaType === 'video' && (
+                  <span className="badge" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}>
+                    <Film size={12} /> Video MP4 / WEBM detectado
+                  </span>
+                )}
+                {detectedMediaType === 'gif' && (
+                  <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}>
+                    <Sparkles size={12} /> GIF Animado detectado
+                  </span>
+                )}
+                {detectedMediaType === 'image' && mediaUrl && (
+                  <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}>
+                    <Image size={12} /> Imagen Flyer detectada
+                  </span>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="url"
-                  placeholder="https://ejemplo.com/flyer-promocion.jpg"
+                  placeholder="https://ejemplo.com/archivo.jpg, animacion.gif o video.mp4"
                   value={mediaUrl}
                   onChange={(e) => setMediaUrl(e.target.value)}
                   style={{ flex: 1, fontSize: '0.84rem' }}
@@ -957,13 +1006,17 @@ export default function BroadcastTab() {
                     type="button"
                     onClick={() => setMediaUrl('')}
                     className="btn btn-secondary"
-                    title="Quitar imagen"
+                    title="Quitar multimedia"
                     style={{ padding: '0 12px' }}
                   >
                     <Trash2 size={16} />
                   </button>
                 )}
               </div>
+
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)', lineHeight: 1.4 }}>
+                💡 <strong>Formatos soportados:</strong> Imágenes (JPG, PNG, WEBP), GIF animado y Videos cortos (MP4, WEBM). Máximo 16MB recomendado para entrega fluida en WhatsApp.
+              </span>
             </div>
 
             {/* Section 4: Configuración de Seguridad Anti-Ban */}
@@ -1125,25 +1178,77 @@ export default function BroadcastTab() {
                 position: 'relative'
               }}>
                 
-                {/* Optional Media Flyer in preview */}
+                {/* Optional Media Flyer / GIF / Video in preview */}
                 {mediaUrl && (
                   <div style={{
                     borderRadius: '6px',
                     overflow: 'hidden',
-                    maxHeight: '180px',
+                    maxHeight: '190px',
                     background: '#111b21',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    position: 'relative'
                   }}>
-                    <img
-                      src={mediaUrl}
-                      alt="Flyer promocional"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
-                      style={{ width: '100%', height: 'auto', objectFit: 'cover' }}
-                    />
+                    {detectedMediaType === 'video' ? (
+                      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                        <video
+                          src={mediaUrl}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          controls
+                          style={{ width: '100%', maxHeight: '190px', objectFit: 'cover', display: 'block' }}
+                        />
+                        <span style={{
+                          position: 'absolute',
+                          top: '8px',
+                          left: '8px',
+                          background: 'rgba(0, 0, 0, 0.65)',
+                          backdropFilter: 'blur(4px)',
+                          color: '#fff',
+                          fontSize: '0.68rem',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontWeight: 600,
+                          pointerEvents: 'none'
+                        }}>
+                          <Video size={11} /> VIDEO
+                        </span>
+                      </div>
+                    ) : (
+                      <div style={{ position: 'relative', width: '100%' }}>
+                        <img
+                          src={mediaUrl}
+                          alt="Multimedia promocional"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                          }}
+                          style={{ width: '100%', height: 'auto', maxHeight: '190px', objectFit: 'cover', display: 'block' }}
+                        />
+                        {detectedMediaType === 'gif' && (
+                          <span style={{
+                            position: 'absolute',
+                            bottom: '8px',
+                            left: '8px',
+                            background: 'rgba(0, 0, 0, 0.75)',
+                            backdropFilter: 'blur(4px)',
+                            color: '#fff',
+                            fontSize: '0.68rem',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                            letterSpacing: '0.5px'
+                          }}>
+                            GIF
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1293,9 +1398,11 @@ export default function BroadcastTab() {
                 <strong style={{ color: '#fbbf24' }}>~{Math.ceil((filteredRecipients.length * delaySeconds) / 60)} minutos</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Imagen Flyer:</span>
+                <span style={{ color: 'var(--text-muted)' }}>Multimedia:</span>
                 <strong style={{ color: mediaUrl ? '#34d399' : 'var(--text-dim)' }}>
-                  {mediaUrl ? 'Adjuntada ✅' : 'Solo texto'}
+                  {mediaUrl
+                    ? (detectedMediaType === 'video' ? '🎬 Video MP4' : detectedMediaType === 'gif' ? '✨ GIF Animado' : '🖼️ Imagen Flyer ✅')
+                    : 'Solo texto'}
                 </strong>
               </div>
             </div>

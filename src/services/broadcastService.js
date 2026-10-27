@@ -1,7 +1,93 @@
+import fs from 'fs';
+import path from 'path';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, getAllUsers } from '../firebase.js';
 import { resolveClientRealPhone } from '../utils/helpers.js';
 import { getWppClient, patchWppMediaPrep } from '../utils/fileHandler.js';
+
+/**
+ * Detecta el tipo y extensión del recurso multimedia (imagen, GIF o video)
+ * @param {string} targetUrlOrPath 
+ * @param {string} [contentType]
+ * @returns {{ type: 'video'|'gif'|'image', ext: string, label: string }}
+ */
+export const classifyMediaType = (targetUrlOrPath, contentType = '') => {
+    const clean = (targetUrlOrPath || '').split('?')[0].toLowerCase();
+    const ct = (contentType || '').toLowerCase();
+
+    if (clean.endsWith('.mp4') || clean.endsWith('.m4v') || ct.includes('video/mp4')) {
+        return { type: 'video', ext: 'mp4', label: 'Video' };
+    }
+    if (clean.endsWith('.webm') || ct.includes('video/webm')) {
+        return { type: 'video', ext: 'webm', label: 'Video' };
+    }
+    if (clean.endsWith('.mov') || ct.includes('video/quicktime')) {
+        return { type: 'video', ext: 'mov', label: 'Video' };
+    }
+    if (clean.endsWith('.gif') || ct.includes('image/gif')) {
+        return { type: 'gif', ext: 'gif', label: 'GIF' };
+    }
+    if (clean.endsWith('.png') || ct.includes('image/png')) {
+        return { type: 'image', ext: 'png', label: 'Flyer' };
+    }
+    if (clean.endsWith('.webp') || ct.includes('image/webp')) {
+        return { type: 'image', ext: 'webp', label: 'Flyer' };
+    }
+    return { type: 'image', ext: 'jpg', label: 'Flyer' };
+};
+
+/**
+ * Prepara el recurso multimedia para la difusión descargándolo UNA SOLA VEZ localmente
+ * con su extensión y tipo MIME correctos (evita descargas repetidas por cada cliente).
+ * @param {string} mediaUrlOrPath 
+ * @param {string} campaignId 
+ * @returns {Promise<{ localPath: string, isTemp: boolean, type: 'video'|'gif'|'image', label: string }|null>}
+ */
+export const prepareBroadcastMedia = async (mediaUrlOrPath, campaignId) => {
+    if (!mediaUrlOrPath || typeof mediaUrlOrPath !== 'string' || !mediaUrlOrPath.trim()) return null;
+
+    // Caso 1: Archivo ya local en disco
+    if (fs.existsSync(mediaUrlOrPath)) {
+        const info = classifyMediaType(mediaUrlOrPath);
+        return { localPath: mediaUrlOrPath, isTemp: false, type: info.type, label: info.label };
+    }
+
+    // Caso 2: URL remota (Firebase Storage, CDN, enlace directo)
+    if (mediaUrlOrPath.startsWith('http://') || mediaUrlOrPath.startsWith('https://')) {
+        const tempDir = path.resolve('./temp_broadcast');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        try {
+            console.log(`📥 [BroadcastService] Pre-descargando recurso multimedia para la campaña...`);
+            const response = await fetch(mediaUrlOrPath);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status} ${response.statusText}`);
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            const mediaInfo = classifyMediaType(mediaUrlOrPath, contentType);
+            const fileName = `broadcast_${campaignId}_${Date.now()}.${mediaInfo.ext}`;
+            const localPath = path.join(tempDir, fileName);
+
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            fs.writeFileSync(localPath, buffer);
+
+            const sizeMb = (buffer.length / (1024 * 1024)).toFixed(2);
+            console.log(`✅ [BroadcastService] Multimedia descargada con éxito: ${fileName} (${sizeMb} MB, Tipo: ${mediaInfo.type.toUpperCase()})`);
+
+            return { localPath, isTemp: true, type: mediaInfo.type, label: mediaInfo.label };
+        } catch (err) {
+            console.warn(`⚠️ [BroadcastService] Error al pre-descargar multimedia remota:`, err.message);
+            const info = classifyMediaType(mediaUrlOrPath);
+            return { localPath: mediaUrlOrPath, isTemp: false, type: info.type, label: info.label };
+        }
+    }
+
+    return null;
+};
 
 // ==========================================
 // ESTADO EN MEMORIA DEL SERVICIO DE DIFUSIÓN
@@ -192,6 +278,17 @@ export const startBroadcast = async ({
         const startTime = Date.now();
         const baseDelayMs = Math.max(4000, (delaySeconds || 7) * 1000);
 
+        // Pre-descargar multimedia una sola vez si es URL remota (conserva tipo y extensión exacta para WhatsApp)
+        let preparedMedia = null;
+        try {
+            preparedMedia = await prepareBroadcastMedia(mediaTarget, campaignId);
+        } catch (eMediaPrep) {
+            console.warn('⚠️ [BroadcastService] No se pudo pre-descargar multimedia:', eMediaPrep.message);
+        }
+
+        const effectiveMediaTarget = preparedMedia?.localPath || mediaTarget;
+        const mediaTypeLabel = preparedMedia?.label || 'Flyer';
+
         // Asegurar que WhatsApp Web tenga inyectado el parche preventivo de MediaPrep antes de iniciar envíos
         try {
             const client = await getWppClient(provider);
@@ -232,11 +329,11 @@ export const startBroadcast = async ({
             const personalizedMessage = interpolateVariables(template, recipient);
 
             try {
-                if (mediaTarget) {
+                if (effectiveMediaTarget) {
                     try {
-                        await provider.sendMessage(recipientJid, personalizedMessage, { media: mediaTarget });
+                        await provider.sendMessage(recipientJid, personalizedMessage, { media: effectiveMediaTarget });
                     } catch (mediaErr) {
-                        console.warn(`⚠️ [BroadcastService] Error al enviar con imagen a ${displayPhone} (${mediaErr.message}). Reintentando con texto seguro...`);
+                        console.warn(`⚠️ [BroadcastService] Error al enviar con multimedia a ${displayPhone} (${mediaErr.message}). Reintentando con texto seguro...`);
                         
                         // Re-aplicar parche preventivo en caso de recarga de sesión de WhatsApp Web
                         try {
@@ -244,10 +341,11 @@ export const startBroadcast = async ({
                             if (client) await patchWppMediaPrep(client);
                         } catch (_) {}
 
-                        // Fallback a solo texto (adjuntando enlace si era URL en la nube)
+                        // Fallback a solo texto (adjuntando enlace original si era URL en la nube)
                         let fallbackMessage = personalizedMessage;
                         if (typeof mediaTarget === 'string' && mediaTarget.startsWith('http')) {
-                            fallbackMessage += `\n\n🖼️ *Flyer adjunto:* ${mediaTarget}`;
+                            const icon = preparedMedia?.type === 'video' ? '🎬' : preparedMedia?.type === 'gif' ? '✨' : '🖼️';
+                            fallbackMessage += `\n\n${icon} *${mediaTypeLabel} adjunto:* ${mediaTarget}`;
                         }
                         await provider.sendMessage(recipientJid, fallbackMessage, {});
                     }
@@ -363,6 +461,16 @@ export const startBroadcast = async ({
                 await provider.sendMessage(adminPhone, summaryMsg, {});
             } catch (errAdmin) {
                 console.error('Error notificando fin de difusión al admin:', errAdmin);
+            }
+        }
+
+        // Limpieza de archivo temporal si fue descargado de la nube
+        if (preparedMedia?.isTemp && preparedMedia?.localPath && fs.existsSync(preparedMedia.localPath)) {
+            try {
+                fs.unlinkSync(preparedMedia.localPath);
+                console.log(`🧹 [BroadcastService] Archivo temporal multimedia eliminado.`);
+            } catch (eClean) {
+                console.warn(`⚠️ [BroadcastService] No se pudo eliminar archivo temporal:`, eClean.message);
             }
         }
 
