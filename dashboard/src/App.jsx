@@ -15,6 +15,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('contacts');
   const [sessionData, setSessionData] = useState(null);
+  const [contactsCount, setContactsCount] = useState(0);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
@@ -80,7 +81,7 @@ export default function App() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)' }}>
       {/* Collapsible Sidebar */}
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} user={user} sessionData={sessionData} />
+      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} user={user} sessionData={sessionData} contactsCount={contactsCount} />
 
       {/* Main Workspace Area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
@@ -173,7 +174,7 @@ export default function App() {
         {/* View Content */}
         <main style={{ flex: 1, overflowX: 'hidden' }}>
           {activeTab === 'connection' && <ConnectionTab sessionData={sessionData} />}
-          {activeTab === 'contacts' && <ContactsTab />}
+          {activeTab === 'contacts' && <ContactsTab onCountUpdate={setContactsCount} />}
           {activeTab === 'prices' && <PricesTab />}
           {activeTab === 'advisors' && <AdvisorsTab />}
         </main>

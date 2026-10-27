@@ -5,7 +5,7 @@ import {
   Users, Search, RefreshCw, MessageCircle, Phone, Calendar,
   UserPlus, Edit3, Trash2, X, Check, Copy, Download,
   FileText, AlertTriangle, MessageSquare, CheckCircle2,
-  Clock, Shield
+  Clock
 } from 'lucide-react';
 
 export default function ContactsTab({ onCountUpdate }) {
