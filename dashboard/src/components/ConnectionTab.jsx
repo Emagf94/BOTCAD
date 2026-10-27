@@ -141,16 +141,6 @@ export default function ConnectionTab({ sessionData }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <button
-            onClick={handleReopenBrowser}
-            disabled={reloadingSession}
-            className="btn btn-emerald"
-            style={{ padding: '9px 16px', fontSize: '0.86rem' }}
-            title="Limpia bloqueos, reabre el navegador Chromium y regenera un código QR nuevo inmediatamente"
-          >
-            <RefreshCw size={16} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
-            {reloadingSession ? 'Reabriendo...' : 'Reabrir Chromium & Regenerar QR'}
-          </button>
-          <button
             onClick={handleForceReload}
             disabled={reloadingSession}
             className="btn btn-secondary"
@@ -159,6 +149,16 @@ export default function ConnectionTab({ sessionData }) {
           >
             <RefreshCw size={16} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
             {reloadingSession ? 'Recargando...' : 'Recargar Sesión (F5)'}
+          </button>
+          <button
+            onClick={handleReopenBrowser}
+            disabled={reloadingSession}
+            className="btn btn-emerald"
+            style={{ padding: '9px 16px', fontSize: '0.86rem' }}
+            title="Limpia bloqueos, reabre el navegador Chromium y regenera un código QR nuevo inmediatamente"
+          >
+            <RefreshCw size={16} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
+            {reloadingSession ? 'Reabriendo...' : 'Reabrir Chromium & Regenerar QR'}
           </button>
         </div>
       </div>
