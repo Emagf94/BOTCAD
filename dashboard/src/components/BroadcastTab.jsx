@@ -5,7 +5,7 @@ import { resolveClientPhone } from '../utils/phoneUtils';
 import {
   Megaphone, Users, Smartphone, Send, AlertTriangle, CheckCircle2,
   Clock, Sparkles, RefreshCw, Square, Image, FileText,
-  ShieldCheck, Search, Trash2
+  ShieldCheck, Search, Trash2, X
 } from 'lucide-react';
 
 const PRESET_TEMPLATES = [
@@ -104,6 +104,20 @@ export default function BroadcastTab() {
     return enrichedContacts.filter(c => !c.resolvedPhone.isValid);
   }, [enrichedContacts]);
 
+  // Contactos filtrados específicamente para el buscador del selector manual
+  const searchedManualContacts = useMemo(() => {
+    if (!searchTerm.trim()) return enrichedContacts;
+    const term = searchTerm.toLowerCase().trim();
+    return enrichedContacts.filter(c => {
+      const name = (c.name || '').toLowerCase();
+      const displayPhone = (c.resolvedPhone?.displayPhone || '').toLowerCase();
+      const rawPhone = (c.resolvedPhone?.formattedPhone || c.phone || '').toLowerCase();
+      const contactUser = (c.contactUser || '').toLowerCase();
+      const id = (c.id || '').toLowerCase();
+      return name.includes(term) || displayPhone.includes(term) || rawPhone.includes(term) || contactUser.includes(term) || id.includes(term);
+    });
+  }, [enrichedContacts, searchTerm]);
+
   // Filtrado de audiencia según opción seleccionada (solo contactos con teléfono celular válido)
   const filteredRecipients = useMemo(() => {
     const now = Date.now();
@@ -119,23 +133,12 @@ export default function BroadcastTab() {
         return t > 0 && (now - t) < thirtyDaysMs;
       });
     } else if (filterAudience === 'manual') {
-      if (selectedPhones.size > 0) {
-        list = list.filter(c => selectedPhones.has(c.id) || selectedPhones.has(c.resolvedPhone.formattedPhone));
-      }
-    }
-
-    if (searchTerm.trim() !== '') {
-      const term = searchTerm.toLowerCase();
-      list = list.filter(c =>
-        (c.name || '').toLowerCase().includes(term) ||
-        (c.resolvedPhone.formattedPhone || '').includes(term) ||
-        (c.resolvedPhone.displayPhone || '').toLowerCase().includes(term) ||
-        (c.contactUser || '').toLowerCase().includes(term)
-      );
+      // En modo manual, únicamente los contactos seleccionados son los destinatarios a enviar
+      list = eligibleContacts.filter(c => selectedPhones.has(c.id) || selectedPhones.has(c.resolvedPhone?.formattedPhone));
     }
 
     return list;
-  }, [eligibleContacts, filterAudience, selectedPhones, searchTerm]);
+  }, [eligibleContacts, filterAudience, selectedPhones]);
 
   // Cliente de ejemplo para vista previa en vivo
   const sampleClient = useMemo(() => {
@@ -200,6 +203,40 @@ export default function BroadcastTab() {
     }
     setSelectedPhones(next);
   };
+
+  // Alternar selección masiva adaptada a la búsqueda
+  const handleToggleSelectAll = () => {
+    const isSearching = searchTerm.trim().length > 0;
+    if (isSearching) {
+      const visibleEligible = searchedManualContacts.filter(c => c.resolvedPhone.isValid);
+      if (visibleEligible.length === 0) return;
+      const allVisibleSelected = visibleEligible.every(c => selectedPhones.has(c.id));
+      const next = new Set(selectedPhones);
+      if (allVisibleSelected) {
+        visibleEligible.forEach(c => next.delete(c.id));
+      } else {
+        visibleEligible.forEach(c => next.add(c.id));
+      }
+      setSelectedPhones(next);
+    } else {
+      if (selectedPhones.size === eligibleContacts.length) {
+        setSelectedPhones(new Set());
+      } else {
+        setSelectedPhones(new Set(eligibleContacts.map(c => c.id)));
+      }
+    }
+  };
+
+  const selectButtonLabel = useMemo(() => {
+    const isSearching = searchTerm.trim().length > 0;
+    if (isSearching) {
+      const visibleEligible = searchedManualContacts.filter(c => c.resolvedPhone.isValid);
+      if (visibleEligible.length === 0) return 'Sin visibles';
+      const allVisibleSelected = visibleEligible.every(c => selectedPhones.has(c.id));
+      return allVisibleSelected ? 'Deseleccionar visibles' : `Seleccionar visibles (${visibleEligible.length})`;
+    }
+    return selectedPhones.size === eligibleContacts.length ? 'Deseleccionar todos' : `Todos (${eligibleContacts.length})`;
+  }, [searchTerm, searchedManualContacts, selectedPhones, eligibleContacts]);
 
   const isSending = broadcastState?.status === 'SENDING';
   const progressPercent = broadcastState?.progress || 0;
@@ -682,7 +719,7 @@ export default function BroadcastTab() {
                 flexDirection: 'column',
                 gap: '8px'
               }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <div style={{ position: 'relative', flex: 1 }}>
                     <Search size={14} color="var(--text-dim)" style={{ position: 'absolute', left: '10px', top: '10px' }} />
                     <input
@@ -690,59 +727,107 @@ export default function BroadcastTab() {
                       placeholder="Buscar por nombre o teléfono..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      style={{ paddingLeft: '32px', fontSize: '0.82rem', height: '34px', width: '100%' }}
+                      style={{
+                        paddingLeft: '32px',
+                        paddingRight: searchTerm ? '32px' : '10px',
+                        fontSize: '0.82rem',
+                        height: '34px',
+                        width: '100%'
+                      }}
                     />
+                    {searchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchTerm('')}
+                        style={{
+                          position: 'absolute',
+                          right: '8px',
+                          top: '8px',
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: 'var(--text-dim)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: 0
+                        }}
+                        title="Limpiar búsqueda"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (selectedPhones.size === eligibleContacts.length) setSelectedPhones(new Set());
-                      else setSelectedPhones(new Set(eligibleContacts.map(c => c.id)));
-                    }}
+                    onClick={handleToggleSelectAll}
                     className="btn btn-secondary"
-                    style={{ fontSize: '0.78rem', padding: '0 10px', height: '34px' }}
+                    style={{ fontSize: '0.78rem', padding: '0 10px', height: '34px', whiteSpace: 'nowrap' }}
                   >
-                    {selectedPhones.size === eligibleContacts.length ? 'Deseleccionar' : 'Todos'}
+                    {selectButtonLabel}
                   </button>
                 </div>
 
+                {/* Subtítulo informativo */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem', color: 'var(--text-dim)', padding: '0 4px' }}>
+                  <span>
+                    {searchTerm.trim()
+                      ? `Coincidencias: ${searchedManualContacts.length} de ${enrichedContacts.length}`
+                      : `Total contactos: ${enrichedContacts.length} (${eligibleContacts.length} con celular)`}
+                  </span>
+                  <span style={{ color: selectedPhones.size > 0 ? '#60a5fa' : 'var(--text-dim)', fontWeight: selectedPhones.size > 0 ? 600 : 400 }}>
+                    {selectedPhones.size} marcado{selectedPhones.size === 1 ? '' : 's'}
+                  </span>
+                </div>
+
                 <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {enrichedContacts.map((c) => {
-                    const isChecked = selectedPhones.has(c.id);
-                    const isEligible = c.resolvedPhone.isValid;
-                    return (
-                      <label
-                        key={c.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px',
-                          padding: '6px 10px',
-                          borderRadius: '6px',
-                          background: isChecked ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                          cursor: isEligible ? 'pointer' : 'not-allowed',
-                          opacity: isEligible ? 1 : 0.45,
-                          fontSize: '0.82rem'
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={!isEligible}
-                          checked={isChecked}
-                          onChange={() => isEligible && toggleSelectPhone(c.id)}
-                        />
-                        <span style={{ fontWeight: 600, color: '#f8fafc' }}>{c.name || 'Sin nombre'}</span>
-                        <span style={{ color: isEligible ? '#93c5fd' : 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                          {c.resolvedPhone.displayPhone}
-                        </span>
-                        {!isEligible && (
-                          <span style={{ fontSize: '0.72rem', color: '#fca5a5', fontStyle: 'italic' }}>
-                            (Sin celular registrado)
+                  {searchedManualContacts.length === 0 ? (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '24px 12px',
+                      color: 'var(--text-dim)',
+                      fontSize: '0.82rem',
+                      fontStyle: 'italic'
+                    }}>
+                      No se encontraron contactos que coincidan con "{searchTerm}"
+                    </div>
+                  ) : (
+                    searchedManualContacts.map((c) => {
+                      const isChecked = selectedPhones.has(c.id);
+                      const isEligible = c.resolvedPhone.isValid;
+                      return (
+                        <label
+                          key={c.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '6px 10px',
+                            borderRadius: '6px',
+                            background: isChecked ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                            cursor: isEligible ? 'pointer' : 'not-allowed',
+                            opacity: isEligible ? 1 : 0.45,
+                            fontSize: '0.82rem'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!isEligible}
+                            checked={isChecked}
+                            onChange={() => isEligible && toggleSelectPhone(c.id)}
+                          />
+                          <span style={{ fontWeight: 600, color: '#f8fafc' }}>{c.name || 'Sin nombre'}</span>
+                          <span style={{ color: isEligible ? '#93c5fd' : 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                            {c.resolvedPhone.displayPhone}
                           </span>
-                        )}
-                      </label>
-                    );
-                  })}
+                          {!isEligible && (
+                            <span style={{ fontSize: '0.72rem', color: '#fca5a5', fontStyle: 'italic' }}>
+                              (Sin celular registrado)
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
