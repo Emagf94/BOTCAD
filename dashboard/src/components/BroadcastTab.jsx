@@ -58,7 +58,6 @@ export default function BroadcastTab() {
 
   // 1. Escuchar contactos desde Firestore 'users'
   useEffect(() => {
-    setLoadingContacts(true);
     const q = query(collection(db, 'users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = [];
@@ -67,10 +66,8 @@ export default function BroadcastTab() {
       });
       data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setContacts(data);
-      setLoadingContacts(false);
     }, (err) => {
       console.warn('Error cargando contactos para difusión:', err);
-      setLoadingContacts(false);
     });
     return () => unsubscribe();
   }, []);
