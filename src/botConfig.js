@@ -103,7 +103,9 @@ export const BOT_MESSAGES = {
     soporteAsesor: '👨‍💻 *Contacto Directo con un Asesor*\nEn unos instantes un asesor se unirá a esta conversación.\n\nEscribe tus dudas por aquí. Para cancelar o terminar la sesión escribe *0* o *salir*.',
     pagoTransferencia: '📱 *Pago por Transferencia*\nAceptamos Bancolombia, Nequi y Daviplata.\n👉 Por favor envía la *foto o captura de tu comprobante de pago* por este medio.\n\n*0.* ⬅️ Cancelar pedido',
     pagoEfectivo: '🏢 Has elegido pago en *Efectivo*.\n⚠️ Recuerda que debes acercarte a nuestro local para realizar el pago, y *solo en ese momento se iniciará la impresión*.\n¡Te esperamos en CAD Impresiones!',
-    pedidoExitoso: '✅ ¡Tu pedido ha sido recibido con éxito! 🎉\nUn asesor revisará tus archivos y tu pago, y te contactará por este medio para confirmarlo.\n¡Gracias por preferir CAD Impresiones!'
+    pedidoExitoso: '✅ ¡Tu pedido ha sido recibido con éxito! 🎉\nUn asesor revisará tus archivos y tu pago, y te contactará por este medio para confirmarlo.\n¡Gracias por preferir CAD Impresiones!',
+    bienvenidaConArchivoRegistrado: '¡Hola *{name}*! 👋 Soy *Cadi*, tu asistente virtual de *CAD Impresiones* 🖨️.\n¡Qué gusto saludarte de nuevo! He recibido tu archivo correctamente y ya lo tengo guardado en el sistema 📁✨\n\n🚨 *¡ATENCIÓN IMPORTANTE!* 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Para procesar tu archivo, por favor selecciona una opción del menú que verás a continuación:*\n\n👉 *Marca la OPCIÓN 7* (*Envío Directo de Archivos*): Si deseas que un asesor lo revise personalmente, te cotice a medida o si tienes indicaciones especiales.\n👉 *O marca cualquiera de las otras opciones* (*1* Carteleras, *2* Planos CAD, *3* Documentos, *4* Gran Formato, etc.) según el servicio que necesitas.\n━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    bienvenidaConArchivoNuevo: '¡Hola! 👋 Te damos una cordial bienvenida a *CAD Impresiones* 🖨️. Soy *Cadi*, tu asistente virtual 🤖.\nHe recibido tu archivo con éxito y ya quedó guardado en el sistema 📁✨\n\n🚨 *¡ATENCIÓN IMPORTANTE!* 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n📌 *Tu archivo ya está seguro con nosotros.* Para poder procesarlo y contactarte sobre tu pedido, primero necesitamos registrar tus datos básicos.\n\nLuego podrás elegir en el menú la *opción 7* (*Envío Directo a un Asesor*) o cualquiera de nuestros servicios.\n━━━━━━━━━━━━━━━━━━━━━━━━━━'
 };
 
 // ==========================================
@@ -114,6 +116,7 @@ export const BOT_MEDIA = {
     sendLogo: true,
     sendPaymentQR: true,
     stickerFinishedChat: './assets/chat_f.webp',
+    stickerCadiAlert: './assets/cadi_a.png',
     logoImage: './assets/logo.png',
     paymentQRImage: './assets/qr_pagos.png'
 };
