@@ -111,25 +111,26 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                     const currentFiles = state.getMyState()?.archivos || [];
                     await state.update({ archivos: [...currentFiles, filePath] });
                 }
-                // Enviar sticker cadi_a.png y 3 mensajes para guiar al usuario claramente con alerta
-                await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
-                await new Promise(r => setTimeout(r, 600));
+                // Enviar la alerta en varios mensajes con retraso de 3 segundos y el sticker cadi_a al final
                 await flowDynamic('📎 ¡He recibido tu archivo con éxito y ya lo tengo guardado en el sistema! 📁✨');
-                await new Promise(r => setTimeout(r, 800));
+                await new Promise(r => setTimeout(r, 3000));
                 await flowDynamic([
                     '🚨 *¡ATENCIÓN IMPORTANTE!* 🚨',
                     '━━━━━━━━━━━━━━━━━━━━━━━━━━',
                     '📌 *Para poder procesar tu pedido, es necesario que selecciones una opción del menú:*',
                     '━━━━━━━━━━━━━━━━━━━━━━━━━━'
                 ].join('\n'));
-                await new Promise(r => setTimeout(r, 800));
-                return fallBack([
+                await new Promise(r => setTimeout(r, 3000));
+                await flowDynamic([
                     '👉 *Marca la OPCIÓN 7* (*Envío Directo de Archivos*): Si deseas que un asesor lo revise personalmente, te cotice a medida o si tienes indicaciones especiales.',
                     '',
                     '👉 *O marca cualquiera de las opciones (1 al 6):* Según el tipo de trabajo que requieras (*1* Carteleras, *2* Planos CAD, *3* Documentos, *4* Gran Formato, etc.).',
                     '',
                     'Escribe el *número* de la opción para continuar 👇'
                 ].join('\n'));
+                await new Promise(r => setTimeout(r, 3000));
+                await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
+                return fallBack();
             }
 
             const cloudLinks = extractCloudLinks(rawBody);
@@ -143,24 +144,25 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                         isLink: true
                     });
                 }
-                await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
-                await new Promise(r => setTimeout(r, 600));
                 await flowDynamic('🔗 ¡He recibido tu enlace correctamente y ya quedó registrado! 🌐✨');
-                await new Promise(r => setTimeout(r, 800));
+                await new Promise(r => setTimeout(r, 3000));
                 await flowDynamic([
                     '🚨 *¡ATENCIÓN IMPORTANTE!* 🚨',
                     '━━━━━━━━━━━━━━━━━━━━━━━━━━',
                     '📌 *Para que un asesor pueda revisar tu enlace, por favor indícanos cómo proceder:*',
                     '━━━━━━━━━━━━━━━━━━━━━━━━━━'
                 ].join('\n'));
-                await new Promise(r => setTimeout(r, 800));
-                return fallBack([
+                await new Promise(r => setTimeout(r, 3000));
+                await flowDynamic([
                     '👉 *Marca la OPCIÓN 7* (*Envío Directo de Archivos*): Para que el asesor acceda a tu enlace y atienda tu pedido directamente.',
                     '',
                     '👉 *O marca una opción del 1 al 10* según el servicio que necesitas.',
                     '',
                     'Escribe el *número* para continuar 👇'
                 ].join('\n'));
+                await new Promise(r => setTimeout(r, 3000));
+                await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
+                return fallBack();
             }
 
             const op = rawBody;
@@ -341,19 +343,19 @@ export const flowWelcomeRegistered = addKeyword(EVENTS.ACTION)
         await new Promise(r => setTimeout(r, 1200));
 
         if (tieneArchivos) {
-            await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
-            await new Promise(r => setTimeout(r, 600));
+            await flowDynamic(`¡Muchas gracias *${name}*! Tu registro ha sido completado con éxito 🎉\n\n📁 Tu archivo ya está guardado y listo en el sistema.`);
+            await new Promise(r => setTimeout(r, 3000));
             await flowDynamic([
-                `¡Muchas gracias *${name}*! Tu registro ha sido completado con éxito 🎉`,
+                '🚨 *¡RECORDATORIO!* 🚨',
+                '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+                '📌 *Por favor, selecciona una opción en el menú que verás a continuación:*',
                 '',
-                `🚨 *¡RECORDATORIO!* 🚨`,
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-                `📌 Recuerda que ya tenemos tu archivo guardado 📁✅`,
-                `Por favor, selecciona una opción en el menú que verás a continuación:`,
-                `👉 *Marca la OPCIÓN 7* (*Envío Directo*) para que un asesor revise tu archivo personalmente.`,
-                `👉 *O marca cualquiera de las otras opciones* según el servicio que necesitas.`,
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                '👉 *Marca la OPCIÓN 7* (*Envío Directo*) para que un asesor revise tu archivo personalmente.',
+                '👉 *O marca cualquiera de las otras opciones* según el servicio que necesitas.',
+                '━━━━━━━━━━━━━━━━━━━━━━━━━━'
             ].join('\n'));
+            await new Promise(r => setTimeout(r, 3000));
+            await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
         } else {
             await flowDynamic(`¡Gracias ${name}!`);
         }
@@ -436,10 +438,22 @@ export const flowWelcome = addKeyword(EVENTS.WELCOME)
             await state.update({ userName: user.name, contactUser: user.contactUser || '' });
             await new Promise(r => setTimeout(r, 1500));
             if (tieneArchivos) {
+                await provider.sendMessage(ctx.from, `¡Hola *${user.name}*! 👋 Soy *Cadi*, tu asistente virtual de *CAD Impresiones* 🖨️.\n¡Qué gusto saludarte de nuevo! He recibido tu archivo correctamente y ya lo tengo guardado en el sistema 📁✨`, {});
+                await new Promise(r => setTimeout(r, 3000));
+                await provider.sendMessage(ctx.from, [
+                    '🚨 *¡ATENCIÓN IMPORTANTE!* 🚨',
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+                    '📌 *Para procesar tu archivo, por favor selecciona una opción del menú que verás a continuación:*',
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━'
+                ].join('\n'), {});
+                await new Promise(r => setTimeout(r, 3000));
+                await provider.sendMessage(ctx.from, [
+                    '👉 *Marca la OPCIÓN 7* (*Envío Directo de Archivos*): Si deseas que un asesor lo revise personalmente, te cotice a medida o si tienes indicaciones especiales.',
+                    '',
+                    '👉 *O marca cualquiera de las otras opciones* (*1* Carteleras, *2* Planos CAD, *3* Documentos, *4* Gran Formato, etc.) según el servicio que necesitas.'
+                ].join('\n'), {});
+                await new Promise(r => setTimeout(r, 3000));
                 await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
-                await new Promise(r => setTimeout(r, 600));
-                const msgAlerta = renderMessage('bienvenidaConArchivoRegistrado', { name: user.name });
-                await provider.sendMessage(ctx.from, msgAlerta, {});
                 return gotoFlow(flowMainMenu);
             } else {
                 let msg = renderMessage('bienvenidaRegistrado', { name: user.name });
@@ -449,10 +463,18 @@ export const flowWelcome = addKeyword(EVENTS.WELCOME)
         } else {
             await new Promise(r => setTimeout(r, 1500));
             if (tieneArchivos) {
+                await provider.sendMessage(ctx.from, '¡Hola! 👋 Te damos una cordial bienvenida a *CAD Impresiones* 🖨️. Soy *Cadi*, tu asistente virtual 🤖.\nHe recibido tu archivo con éxito y ya quedó guardado en el sistema 📁✨', {});
+                await new Promise(r => setTimeout(r, 3000));
+                await provider.sendMessage(ctx.from, [
+                    '🚨 *¡ATENCIÓN IMPORTANTE!* 🚨',
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+                    '📌 *Tu archivo ya está seguro con nosotros.* Para poder procesarlo y contactarte sobre tu pedido, primero necesitamos registrar tus datos básicos.',
+                    '',
+                    'Luego podrás elegir en el menú la *opción 7* (*Envío Directo a un Asesor*) o cualquiera de nuestros servicios.',
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━'
+                ].join('\n'), {});
+                await new Promise(r => setTimeout(r, 3000));
                 await safeSendSticker(provider, ctx.from, './assets/cadi_a.png');
-                await new Promise(r => setTimeout(r, 600));
-                const msgAlerta = renderMessage('bienvenidaConArchivoNuevo');
-                await provider.sendMessage(ctx.from, msgAlerta, {});
                 return gotoFlow(flowNameCapture);
             } else {
                 let msg = BOT_MESSAGES.bienvenidaNuevo || '¡Hola!\nSoy *Cadi*, tu asistente virtual 🤖.\n¡Bienvenido a *CAD Impresiones* 🖨️!';
