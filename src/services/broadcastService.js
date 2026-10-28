@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, collection, getDocs, query, orderBy, writeBatch } from 'firebase/firestore';
 import { db, getAllUsers } from '../firebase.js';
 import { resolveClientRealPhone } from '../utils/helpers.js';
 import { getWppClient, patchWppMediaPrep } from '../utils/fileHandler.js';
@@ -87,6 +87,167 @@ export const prepareBroadcastMedia = async (mediaUrlOrPath, campaignId) => {
     }
 
     return null;
+};
+
+/**
+ * Reensambla un archivo multimedia subido en fragmentos a Firestore ('config/bot_broadcast/chunks')
+ * y lo guarda en disco en ./temp_broadcast
+ * @param {string} campaignId
+ * @param {object} attachmentMeta { name, type, ext, size, totalChunks }
+ * @returns {Promise<{ localPath: string, isTemp: boolean, type: 'video'|'gif'|'image', label: string, fileName: string }|null>}
+ */
+export const assembleMediaFromFirestoreChunks = async (campaignId, attachmentMeta) => {
+    if (!db || !attachmentMeta) return null;
+    const tempDir = path.resolve('./temp_broadcast');
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    try {
+        console.log(`📦 [BroadcastService] Reensamblando archivo multimedia local (${attachmentMeta.name}, ${attachmentMeta.totalChunks} fragmentos)...`);
+        const chunksCol = collection(db, 'config', 'bot_broadcast', 'chunks');
+        const q = query(chunksCol, orderBy('chunkIndex', 'asc'));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            console.warn('⚠️ [BroadcastService] No se encontraron fragmentos en Firestore para reensamblar.');
+            return null;
+        }
+
+        const chunks = [];
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            chunks.push({ index: data.chunkIndex, data: data.data });
+        });
+
+        chunks.sort((a, b) => a.index - b.index);
+        const fullBase64 = chunks.map(c => c.data).join('');
+        const buffer = Buffer.from(fullBase64, 'base64');
+
+        const safeExt = attachmentMeta.ext || (attachmentMeta.type === 'video' ? 'mp4' : (attachmentMeta.type === 'gif' ? 'gif' : 'jpg'));
+        const cleanBase = path.parse(attachmentMeta.name || `media_${campaignId}`).name.replace(/[^\w.-]/g, '_');
+        const fileName = `broadcast_${campaignId}_${cleanBase}.${safeExt}`;
+        const localPath = path.join(tempDir, fileName);
+
+        fs.writeFileSync(localPath, buffer);
+        console.log(`✅ [BroadcastService] Archivo multimedia reensamblado: ${fileName} (${(buffer.length / (1024 * 1024)).toFixed(2)} MB, Tipo: ${attachmentMeta.type.toUpperCase()})`);
+
+        // Limpieza de fragmentos en Firestore de fondo
+        (async () => {
+            try {
+                const batch = writeBatch(db);
+                snapshot.forEach(docSnap => {
+                    batch.delete(docSnap.ref);
+                });
+                await batch.commit();
+                console.log(`🧹 [BroadcastService] Fragmentos temporales eliminados de Firestore.`);
+            } catch (errClean) {
+                console.warn(`⚠️ [BroadcastService] Error al limpiar fragmentos en Firestore:`, errClean.message);
+            }
+        })();
+
+        const info = classifyMediaType(localPath);
+        return {
+            localPath,
+            isTemp: true,
+            type: attachmentMeta.type || info.type,
+            label: info.label,
+            fileName: attachmentMeta.name || fileName
+        };
+    } catch (e) {
+        console.error('❌ [BroadcastService] Error reensamblando archivo desde Firestore:', e);
+        return null;
+    }
+};
+
+/**
+ * Envía un mensaje multimedia personalizado a través de los métodos nativos de WPPConnect
+ * adaptados específicamente para Videos con reproductor interactivo, GIFs animados e Imágenes.
+ * @param {object} provider Instancia del proveedor
+ * @param {object} client Instancia del cliente WPPConnect nativo
+ * @param {string} recipientJid JID del cliente (ej. 573184849332@c.us)
+ * @param {string} filePath Ruta local del archivo
+ * @param {'video'|'gif'|'image'} mediaType Tipo clasificado del archivo
+ * @param {string} fileName Nombre original del archivo
+ * @param {string} caption Mensaje personalizado
+ * @returns {Promise<{ success: boolean, method: string }>}
+ */
+export const sendBroadcastMediaMessage = async (provider, client, recipientJid, filePath, mediaType, fileName, caption) => {
+    const displayName = fileName || path.basename(filePath);
+    const resolvedType = mediaType || classifyMediaType(filePath).type;
+
+    // 1. VIDEOS (MP4, WEBM, MOV, M4V)
+    // Se envía como video nativo para que WhatsApp muestre la miniatura, controles de play/pause y sonido.
+    if (resolvedType === 'video') {
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(recipientJid, filePath, {
+                    filename: displayName,
+                    caption: caption || '',
+                    type: 'video',
+                    waitForAck: false
+                });
+                return { success: true, method: 'client.sendFile:video' };
+            } catch (errVideoOpt) {
+                console.warn(`⚠️ [BroadcastMedia] client.sendFile (options) falló: ${errVideoOpt.message}. Probando llamada posicional...`);
+                try {
+                    await client.sendFile(recipientJid, filePath, displayName, caption || '');
+                    return { success: true, method: 'client.sendFile:positional' };
+                } catch (errVideoPos) {
+                    console.warn(`⚠️ [BroadcastMedia] client.sendFile (posicional) falló: ${errVideoPos.message}`);
+                }
+            }
+        }
+    }
+
+    // 2. GIF ANIMADO
+    // En WhatsApp Web los gifs se despachan con sendVideoAsGif o sendFile con tipo auto-detect
+    if (resolvedType === 'gif') {
+        if (client && typeof client.sendVideoAsGif === 'function') {
+            try {
+                await client.sendVideoAsGif(recipientJid, filePath, displayName || 'animacion.gif', caption || '');
+                return { success: true, method: 'client.sendVideoAsGif' };
+            } catch (errGif) {
+                console.warn(`⚠️ [BroadcastMedia] client.sendVideoAsGif falló: ${errGif.message}. Probando sendFile...`);
+            }
+        }
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(recipientJid, filePath, displayName || 'animacion.gif', caption || '');
+                return { success: true, method: 'client.sendFile:gif' };
+            } catch (errGifFile) {
+                console.warn(`⚠️ [BroadcastMedia] client.sendFile para GIF falló: ${errGifFile.message}`);
+            }
+        }
+    }
+
+    // 3. IMÁGENES FLYER (JPG, PNG, WEBP)
+    if (resolvedType === 'image') {
+        if (client && typeof client.sendImage === 'function') {
+            try {
+                await client.sendImage(recipientJid, filePath, displayName, caption || '');
+                return { success: true, method: 'client.sendImage' };
+            } catch (errImg) {
+                console.warn(`⚠️ [BroadcastMedia] client.sendImage falló: ${errImg.message}. Probando sendFile...`);
+            }
+        }
+        if (client && typeof client.sendFile === 'function') {
+            try {
+                await client.sendFile(recipientJid, filePath, displayName, caption || '');
+                return { success: true, method: 'client.sendFile:image' };
+            } catch (errImgFile) {
+                console.warn(`⚠️ [BroadcastMedia] client.sendFile para imagen falló: ${errImgFile.message}`);
+            }
+        }
+    }
+
+    // 4. Fallback al proveedor base de BuilderBot si estuviera disponible
+    if (provider && typeof provider.sendMessage === 'function') {
+        await provider.sendMessage(recipientJid, caption || '', { media: filePath });
+        return { success: true, method: 'provider.sendMessage:media' };
+    }
+
+    throw new Error('No se encontró ningún método de entrega multimedia disponible en el cliente');
 };
 
 // ==========================================
@@ -201,6 +362,8 @@ export const startBroadcast = async ({
     template,
     mediaUrl = null,
     mediaPath = null,
+    hasLocalAttachment = false,
+    attachmentMeta = null,
     recipients = [],
     delaySeconds = 7,
     adminPhone = null,
@@ -241,12 +404,14 @@ export const startBroadcast = async ({
         startTime: Date.now(),
         template,
         mediaTarget,
+        hasLocalAttachment,
+        attachmentMeta,
         initiator,
         adminPhone,
         logs: []
     };
 
-    console.log(`🚀 [BroadcastService] Iniciando difusión "${campaignId}" a ${totalCount} destinatarios (Iniciado por: ${initiator})...`);
+    console.log(`🚀 [BroadcastService] Iniciando difusión "${campaignId}" a ${totalCount} destinatarios (Iniciado por: ${initiator}, Adjunto local: ${hasLocalAttachment ? 'SÍ' : 'NO'})...`);
 
     // Sincronizar estado inicial en Firestore
     try {
@@ -260,8 +425,10 @@ export const startBroadcast = async ({
                 failed: 0,
                 progress: 0,
                 template,
-                hasMedia: !!mediaTarget,
-                mediaUrl: mediaUrl || (mediaPath ? 'media_local' : null),
+                hasMedia: !!(mediaTarget || hasLocalAttachment),
+                mediaUrl: mediaUrl || (hasLocalAttachment ? (attachmentMeta?.name || 'media_local') : (mediaPath ? 'media_local' : null)),
+                hasLocalAttachment: !!hasLocalAttachment,
+                attachmentMeta: attachmentMeta || null,
                 delaySeconds,
                 initiator,
                 startedAt: new Date().toISOString(),
@@ -278,22 +445,33 @@ export const startBroadcast = async ({
         const startTime = Date.now();
         const baseDelayMs = Math.max(4000, (delaySeconds || 7) * 1000);
 
-        // Pre-descargar multimedia una sola vez si es URL remota (conserva tipo y extensión exacta para WhatsApp)
+        // Pre-descargar o reensamblar multimedia una sola vez antes de la difusión
         let preparedMedia = null;
-        try {
-            preparedMedia = await prepareBroadcastMedia(mediaTarget, campaignId);
-        } catch (eMediaPrep) {
-            console.warn('⚠️ [BroadcastService] No se pudo pre-descargar multimedia:', eMediaPrep.message);
+        if (hasLocalAttachment && attachmentMeta) {
+            try {
+                preparedMedia = await assembleMediaFromFirestoreChunks(campaignId, attachmentMeta);
+            } catch (eChunk) {
+                console.warn('⚠️ [BroadcastService] Error al reensamblar fragmentos locales de Firestore:', eChunk.message);
+            }
+        } else if (mediaTarget) {
+            try {
+                preparedMedia = await prepareBroadcastMedia(mediaTarget, campaignId);
+            } catch (eMediaPrep) {
+                console.warn('⚠️ [BroadcastService] No se pudo pre-descargar multimedia:', eMediaPrep.message);
+            }
         }
 
         const effectiveMediaTarget = preparedMedia?.localPath || mediaTarget;
-        const mediaTypeLabel = preparedMedia?.label || 'Flyer';
+        const mediaType = preparedMedia?.type || (effectiveMediaTarget ? classifyMediaType(effectiveMediaTarget).type : 'image');
+        const mediaTypeLabel = preparedMedia?.label || (mediaType === 'video' ? 'Video' : mediaType === 'gif' ? 'GIF' : 'Flyer');
+        const mediaFileName = preparedMedia?.fileName || (effectiveMediaTarget ? path.basename(effectiveMediaTarget) : '');
 
         // Asegurar que WhatsApp Web tenga inyectado el parche preventivo de MediaPrep antes de iniciar envíos
+        let resolvedClient = null;
         try {
-            const client = await getWppClient(provider);
-            if (client) {
-                const patched = await patchWppMediaPrep(client);
+            resolvedClient = await getWppClient(provider);
+            if (resolvedClient) {
+                const patched = await patchWppMediaPrep(resolvedClient);
                 console.log(`🧩 [BroadcastService] Verificación de parche MediaPrep: ${patched ? 'ACTIVO' : 'NO_REQUERIDO'}`);
             }
         } catch (ePatch) {
@@ -331,20 +509,27 @@ export const startBroadcast = async ({
             try {
                 if (effectiveMediaTarget) {
                     try {
-                        await provider.sendMessage(recipientJid, personalizedMessage, { media: effectiveMediaTarget });
+                        await sendBroadcastMediaMessage(
+                            provider,
+                            resolvedClient,
+                            recipientJid,
+                            effectiveMediaTarget,
+                            mediaType,
+                            mediaFileName,
+                            personalizedMessage
+                        );
                     } catch (mediaErr) {
                         console.warn(`⚠️ [BroadcastService] Error al enviar con multimedia a ${displayPhone} (${mediaErr.message}). Reintentando con texto seguro...`);
                         
                         // Re-aplicar parche preventivo en caso de recarga de sesión de WhatsApp Web
                         try {
-                            const client = await getWppClient(provider);
-                            if (client) await patchWppMediaPrep(client);
+                            if (resolvedClient) await patchWppMediaPrep(resolvedClient);
                         } catch (_) {}
 
                         // Fallback a solo texto (adjuntando enlace original si era URL en la nube)
                         let fallbackMessage = personalizedMessage;
                         if (typeof mediaTarget === 'string' && mediaTarget.startsWith('http')) {
-                            const icon = preparedMedia?.type === 'video' ? '🎬' : preparedMedia?.type === 'gif' ? '✨' : '🖼️';
+                            const icon = mediaType === 'video' ? '🎬' : mediaType === 'gif' ? '✨' : '🖼️';
                             fallbackMessage += `\n\n${icon} *${mediaTypeLabel} adjunto:* ${mediaTarget}`;
                         }
                         await provider.sendMessage(recipientJid, fallbackMessage, {});
@@ -360,7 +545,7 @@ export const startBroadcast = async ({
                     phone: displayPhone,
                     status: 'SUCCESS'
                 });
-                console.log(`📤 [BroadcastService] [${i + 1}/${totalCount}] Enviado a ${recipient.name || 'Cliente'} (${displayPhone})`);
+                console.log(`📤 [BroadcastService] [${i + 1}/${totalCount}] Enviado a ${recipient.name || 'Cliente'} (${displayPhone}) [${effectiveMediaTarget ? mediaType.toUpperCase() : 'TEXTO'}]`);
             } catch (err) {
                 activeBroadcast.failed++;
                 activeBroadcast.logs.unshift({
@@ -532,6 +717,8 @@ export const initBroadcastService = (provider) => {
                     campaignId: data.campaignId || Date.now().toString(),
                     template: data.template || '',
                     mediaUrl: data.mediaUrl || null,
+                    hasLocalAttachment: !!data.hasLocalAttachment,
+                    attachmentMeta: data.attachmentMeta || null,
                     recipients: targetRecipients,
                     delaySeconds: data.delaySeconds || 7,
                     initiator: 'DASHBOARD'

@@ -5,7 +5,8 @@ import { resolveClientPhone } from '../utils/phoneUtils';
 import {
   Megaphone, Users, Smartphone, Send, AlertTriangle, CheckCircle2,
   Clock, Sparkles, RefreshCw, Square, Image, FileText,
-  ShieldCheck, Search, Trash2, X, Video, Film
+  ShieldCheck, Search, Trash2, X, Video, Film,
+  UploadCloud, Paperclip, Play, Check
 } from 'lucide-react';
 
 /**
@@ -63,22 +64,148 @@ export default function BroadcastTab() {
   const [messageTemplate, setMessageTemplate] = useState(
     '¡Hola {name}! 👋 Te saludamos de *CAD Impresiones* 🖨️.\n\nTenemos nuevas promociones en impresión de planos y encuadernados para tus proyectos 📐✨.\n\nEscribe *hola* para ver nuestro catálogo completo o enviar tus archivos.'
   );
+  const [mediaSourceMode, setMediaSourceMode] = useState('local'); // 'local' | 'url'
+  const [attachedFile, setAttachedFile] = useState(null);
+  const [attachedPreviewUrl, setAttachedPreviewUrl] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
   const [delaySeconds, setDelaySeconds] = useState(7);
   const [filterAudience, setFilterAudience] = useState('all'); // all | withName | recent | manual
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPhones, setSelectedPhones] = useState(new Set());
 
-  // Tipo de archivo multimedia detectado
-  const detectedMediaType = useMemo(() => detectMediaType(mediaUrl), [mediaUrl]);
+  const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // Tipo de archivo multimedia detectado (archivo local o enlace URL)
+  const detectedMediaType = useMemo(() => {
+    if (mediaSourceMode === 'local' && attachedFile) {
+      const type = (attachedFile.type || '').toLowerCase();
+      const name = (attachedFile.name || '').toLowerCase();
+      if (type.startsWith('video/') || name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mov') || name.endsWith('.m4v')) {
+        return 'video';
+      }
+      if (type === 'image/gif' || name.endsWith('.gif')) {
+        return 'gif';
+      }
+      return 'image';
+    }
+    return detectMediaType(mediaUrl);
+  }, [mediaSourceMode, attachedFile, mediaUrl]);
+
+  // Recurso multimedia activo para la previsualización en el simulador
+  const effectivePreviewMedia = useMemo(() => {
+    if (mediaSourceMode === 'local') return attachedPreviewUrl;
+    return mediaUrl ? mediaUrl.trim() : '';
+  }, [mediaSourceMode, attachedPreviewUrl, mediaUrl]);
+
+  // Manejador de selección de archivo local
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    if (attachedPreviewUrl) {
+      URL.revokeObjectURL(attachedPreviewUrl);
+    }
+    setAttachedFile(file);
+    const objectUrl = URL.createObjectURL(file);
+    setAttachedPreviewUrl(objectUrl);
+  };
+
+  const handleRemoveAttachedFile = () => {
+    if (attachedPreviewUrl) {
+      URL.revokeObjectURL(attachedPreviewUrl);
+    }
+    setAttachedFile(null);
+    setAttachedPreviewUrl('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Drag & drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelect(e.dataTransfer.files[0]);
+    }
+  };
+
+  // Limpiar URL temporal al desmontar
+  useEffect(() => {
+    return () => {
+      if (attachedPreviewUrl) {
+        URL.revokeObjectURL(attachedPreviewUrl);
+      }
+    };
+  }, [attachedPreviewUrl]);
+
+  // Subir archivo en fragmentos a Firestore ('config/bot_broadcast/chunks')
+  const uploadMediaInChunks = async (file, campaignId, onProgress) => {
+    const CHUNK_SIZE = 350 * 1024; // 350 KB por fragmento (seguro para Firestore)
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i += 8192) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, len)));
+    }
+    const base64 = btoa(binary);
+
+    const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
+    const chunksCol = collection(db, 'config', 'bot_broadcast', 'chunks');
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, base64.length);
+      const chunkData = base64.substring(start, end);
+
+      await setDoc(doc(chunksCol, `chunk_${i.toString().padStart(4, '0')}`), {
+        campaignId,
+        chunkIndex: i,
+        totalChunks,
+        data: chunkData,
+        createdAt: Date.now()
+      });
+
+      if (onProgress) {
+        onProgress(Math.round(((i + 1) / totalChunks) * 100));
+      }
+    }
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isVideo = file.type.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v'].includes(ext);
+    const isGif = file.type === 'image/gif' || ext === 'gif';
+
+    return {
+      name: file.name,
+      type: isVideo ? 'video' : (isGif ? 'gif' : 'image'),
+      ext: ext || (isVideo ? 'mp4' : 'jpg'),
+      size: file.size,
+      totalChunks
+    };
+  };
 
   // Modal confirmación
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionSuccess, setActionSuccess] = useState('');
   const [actionError, setActionError] = useState('');
-
-  const textareaRef = useRef(null);
 
   // 1. Escuchar contactos desde Firestore 'users'
   useEffect(() => {
@@ -294,12 +421,30 @@ export default function BroadcastTab() {
         contactUser: c.contactUser || ''
       }));
 
+      const campaignId = Date.now().toString();
+      let hasLocalAttachment = false;
+      let attachmentMeta = null;
+
+      // Si se adjuntó un archivo local, subirlo en fragmentos a Firestore
+      if (mediaSourceMode === 'local' && attachedFile) {
+        setUploadingMedia(true);
+        setUploadProgress(5);
+        attachmentMeta = await uploadMediaInChunks(attachedFile, campaignId, (pct) => {
+          setUploadProgress(pct);
+        });
+        hasLocalAttachment = true;
+        setUploadingMedia(false);
+      }
+
       await setDoc(doc(db, 'config', 'bot_broadcast'), {
         action: 'START',
         actionTimestamp: Date.now(),
-        campaignId: Date.now().toString(),
+        campaignId,
         template: messageTemplate.trim(),
-        mediaUrl: mediaUrl.trim() || null,
+        hasMedia: hasLocalAttachment || !!mediaUrl.trim(),
+        mediaUrl: hasLocalAttachment ? (attachedFile?.name || 'media_local') : (mediaUrl.trim() || null),
+        hasLocalAttachment,
+        attachmentMeta,
         delaySeconds: Number(delaySeconds) || 7,
         selectedRecipients: recipientPayload,
         status: 'STARTING',
@@ -320,6 +465,7 @@ export default function BroadcastTab() {
       setActionError(`Error al despachar la campaña: ${e.message}`);
     } finally {
       setActionLoading(false);
+      setUploadingMedia(false);
     }
   };
 
@@ -961,24 +1107,32 @@ export default function BroadcastTab() {
               </div>
             </div>
 
-            {/* Section 3: Multimedia Adjunta: Imagen, GIF o Video corto (Opcional) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
-                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {/* Section 3: Multimedia Adjunta: Video, GIF o Imagen Flyer */}
+            <div style={{
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <label style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {detectedMediaType === 'video' ? (
-                    <Video size={15} color="#c084fc" />
+                    <Video size={17} color="#c084fc" />
                   ) : detectedMediaType === 'gif' ? (
-                    <Sparkles size={15} color="#fbbf24" />
+                    <Sparkles size={17} color="#fbbf24" />
                   ) : (
-                    <Image size={15} color="#ec4899" />
+                    <Image size={17} color="#ec4899" />
                   )}
-                  Multimedia Promocional (Imagen, GIF o Video corto - Opcional):
+                  3. Multimedia Adjunta (Video, GIF o Imagen):
                 </label>
 
                 {/* Formato Detectado Badge */}
                 {detectedMediaType === 'video' && (
                   <span className="badge" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}>
-                    <Film size={12} /> Video MP4 / WEBM detectado
+                    <Film size={12} /> Video MP4 nativo (Con reproductor)
                   </span>
                 )}
                 {detectedMediaType === 'gif' && (
@@ -986,37 +1140,241 @@ export default function BroadcastTab() {
                     <Sparkles size={12} /> GIF Animado detectado
                   </span>
                 )}
-                {detectedMediaType === 'image' && mediaUrl && (
+                {detectedMediaType === 'image' && (attachedFile || mediaUrl) && (
                   <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}>
                     <Image size={12} /> Imagen Flyer detectada
                   </span>
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="url"
-                  placeholder="https://ejemplo.com/archivo.jpg, animacion.gif o video.mp4"
-                  value={mediaUrl}
-                  onChange={(e) => setMediaUrl(e.target.value)}
-                  style={{ flex: 1, fontSize: '0.84rem' }}
-                />
-                {mediaUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setMediaUrl('')}
-                    className="btn btn-secondary"
-                    title="Quitar multimedia"
-                    style={{ padding: '0 12px' }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
+              {/* Selector de Modo: Adjuntar Archivo Local vs Enlace URL */}
+              <div style={{ display: 'flex', gap: '8px', background: 'rgba(0, 0, 0, 0.3)', padding: '4px', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setMediaSourceMode('local')}
+                  style={{
+                    flex: 1,
+                    padding: '7px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: mediaSourceMode === 'local' ? 'rgba(139, 92, 246, 0.25)' : 'transparent',
+                    color: mediaSourceMode === 'local' ? '#c084fc' : 'var(--text-muted)',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <Paperclip size={14} />
+                  Adjuntar Archivo Local (Video / Flyer)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMediaSourceMode('url')}
+                  style={{
+                    flex: 1,
+                    padding: '7px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: mediaSourceMode === 'url' ? 'rgba(59, 130, 246, 0.25)' : 'transparent',
+                    color: mediaSourceMode === 'url' ? '#60a5fa' : 'var(--text-muted)',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <UploadCloud size={14} />
+                  Enlace Web (URL externa)
+                </button>
               </div>
 
-              <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)', lineHeight: 1.4 }}>
-                💡 <strong>Formatos soportados:</strong> Imágenes (JPG, PNG, WEBP), GIF animado y Videos cortos (MP4, WEBM). Máximo 16MB recomendado para entrega fluida en WhatsApp.
-              </span>
+              {/* Input de archivo oculto */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="video/mp4,video/webm,video/quicktime,video/m4v,image/png,image/jpeg,image/webp,image/gif"
+                onChange={(e) => handleFileSelect(e.target.files?.[0])}
+              />
+
+              {/* MODO 1: ARCHIVO LOCAL */}
+              {mediaSourceMode === 'local' && (
+                <div>
+                  {!attachedFile ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      style={{
+                        border: isDragging ? '2px dashed #a855f7' : '2px dashed rgba(255, 255, 255, 0.15)',
+                        background: isDragging ? 'rgba(168, 85, 247, 0.1)' : 'rgba(0, 0, 0, 0.2)',
+                        borderRadius: '10px',
+                        padding: '24px 16px',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '10px',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <div style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: '12px',
+                        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(236, 72, 153, 0.2) 100%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#c084fc',
+                        border: '1px solid rgba(168, 85, 247, 0.3)'
+                      }}>
+                        <Video size={22} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#f8fafc' }}>
+                          Haz clic para seleccionar o arrastra tu video o imagen aquí
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '4px' }}>
+                          Formatos admitidos: <strong>MP4, WEBM, MOV, GIF animado, JPG, PNG, WEBP</strong>
+                        </div>
+                      </div>
+                      <div style={{
+                        fontSize: '0.72rem',
+                        color: '#34d399',
+                        background: 'rgba(16, 185, 129, 0.12)',
+                        padding: '4px 10px',
+                        borderRadius: '999px',
+                        fontWeight: 600
+                      }}>
+                        💡 Recomendado: Video MP4 hasta 16 MB para reproducción instantánea con audio en WhatsApp
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.35)',
+                      border: '1px solid rgba(168, 85, 247, 0.3)',
+                      borderRadius: '10px',
+                      padding: '14px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            background: detectedMediaType === 'video' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                            color: detectedMediaType === 'video' ? '#c084fc' : '#34d399',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            {detectedMediaType === 'video' ? <Film size={12} /> : <Image size={12} />}
+                            {detectedMediaType === 'video' ? 'VIDEO ADJUNTO' : detectedMediaType === 'gif' ? 'GIF ADJUNTO' : 'IMAGEN ADJUNTA'}
+                          </span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc', wordBreak: 'break-all' }}>
+                            {attachedFile.name}
+                          </span>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--text-dim)' }}>
+                            ({(attachedFile.size / (1024 * 1024)).toFixed(2)} MB)
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '0.76rem' }}
+                          >
+                            Cambiar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRemoveAttachedFile}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', color: '#fca5a5' }}
+                            title="Quitar archivo"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Reproductor interactivo de video o vista previa de imagen */}
+                      {detectedMediaType === 'video' && attachedPreviewUrl && (
+                        <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', maxHeight: '200px' }}>
+                          <video
+                            src={attachedPreviewUrl}
+                            controls
+                            playsInline
+                            style={{ width: '100%', maxHeight: '200px', display: 'block', outline: 'none' }}
+                          />
+                        </div>
+                      )}
+                      {(detectedMediaType === 'image' || detectedMediaType === 'gif') && attachedPreviewUrl && (
+                        <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', maxHeight: '160px', textAlign: 'center' }}>
+                          <img
+                            src={attachedPreviewUrl}
+                            alt="Vista previa adjunta"
+                            style={{ maxHeight: '160px', width: 'auto', maxWidth: '100%', objectFit: 'contain' }}
+                          />
+                        </div>
+                      )}
+
+                      {attachedFile.size > 16 * 1024 * 1024 && (
+                        <div style={{ fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.1)', padding: '6px 10px', borderRadius: '6px' }}>
+                          ⚠️ Este archivo pesa más de 16 MB. Para que WhatsApp lo entregue con mayor fluidez a todos los clientes, se sugiere un video de hasta 16 MB.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* MODO 2: ENLACE URL EXTERNO */}
+              {mediaSourceMode === 'url' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="url"
+                      placeholder="https://ejemplo.com/archivo.jpg, animacion.gif o video.mp4"
+                      value={mediaUrl}
+                      onChange={(e) => setMediaUrl(e.target.value)}
+                      style={{ flex: 1, fontSize: '0.84rem' }}
+                    />
+                    {mediaUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setMediaUrl('')}
+                        className="btn btn-secondary"
+                        title="Quitar multimedia"
+                        style={{ padding: '0 12px' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)', lineHeight: 1.4 }}>
+                    💡 Si tienes el flyer o video alojado en un CDN o nube externa, puedes ingresar su enlace directo aquí.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Section 4: Configuración de Seguridad Anti-Ban */}
@@ -1179,7 +1537,7 @@ export default function BroadcastTab() {
               }}>
                 
                 {/* Optional Media Flyer / GIF / Video in preview */}
-                {mediaUrl && (
+                {effectivePreviewMedia && (
                   <div style={{
                     borderRadius: '6px',
                     overflow: 'hidden',
@@ -1193,7 +1551,8 @@ export default function BroadcastTab() {
                     {detectedMediaType === 'video' ? (
                       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                         <video
-                          src={mediaUrl}
+                          key={effectivePreviewMedia}
+                          src={effectivePreviewMedia}
                           autoPlay
                           loop
                           muted
@@ -1223,7 +1582,7 @@ export default function BroadcastTab() {
                     ) : (
                       <div style={{ position: 'relative', width: '100%' }}>
                         <img
-                          src={mediaUrl}
+                          src={effectivePreviewMedia}
                           alt="Multimedia promocional"
                           onError={(e) => {
                             e.target.style.display = 'none';
@@ -1399,13 +1758,41 @@ export default function BroadcastTab() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Multimedia:</span>
-                <strong style={{ color: mediaUrl ? '#34d399' : 'var(--text-dim)' }}>
-                  {mediaUrl
-                    ? (detectedMediaType === 'video' ? '🎬 Video MP4' : detectedMediaType === 'gif' ? '✨ GIF Animado' : '🖼️ Imagen Flyer ✅')
-                    : 'Solo texto'}
+                <strong style={{ color: (attachedFile || mediaUrl) ? '#34d399' : 'var(--text-dim)', textAlign: 'right', maxWidth: '65%', wordBreak: 'break-word' }}>
+                  {mediaSourceMode === 'local' && attachedFile
+                    ? (detectedMediaType === 'video'
+                        ? `🎬 Video MP4: ${attachedFile.name} (${(attachedFile.size / (1024 * 1024)).toFixed(1)} MB)`
+                        : detectedMediaType === 'gif'
+                          ? `✨ GIF Animado: ${attachedFile.name} (${(attachedFile.size / (1024 * 1024)).toFixed(1)} MB)`
+                          : `🖼️ Flyer Imagen: ${attachedFile.name} (${(attachedFile.size / (1024 * 1024)).toFixed(1)} MB)`)
+                    : mediaUrl
+                      ? (detectedMediaType === 'video' ? '🎬 Video MP4 (URL externa)' : detectedMediaType === 'gif' ? '✨ GIF Animado (URL)' : '🖼️ Imagen Flyer (URL) ✅')
+                      : 'Solo texto'}
                 </strong>
               </div>
             </div>
+
+            {uploadingMedia && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#c084fc', fontWeight: 600 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <RefreshCw size={14} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                    Subiendo archivo multimedia al bot...
+                  </span>
+                  <span>{uploadProgress}%</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${uploadProgress}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #ec4899 0%, #8b5cf6 100%)',
+                    borderRadius: '999px',
+                    transition: 'width 0.2s ease',
+                    boxShadow: '0 0 10px rgba(236, 72, 153, 0.5)'
+                  }}></div>
+                </div>
+              </div>
+            )}
 
             <p style={{ fontSize: '0.8rem', color: '#fda4af', margin: 0, lineHeight: 1.4 }}>
               ⚠️ Los mensajes serán enviados de forma secuencial y personalizada a través del bot conectado. Puedes cancelar la campaña en cualquier momento.
@@ -1432,7 +1819,7 @@ export default function BroadcastTab() {
                   fontWeight: 700
                 }}
               >
-                {actionLoading ? 'Iniciando...' : '¡Sí, Iniciar Difusión!'}
+                {uploadingMedia ? `Subiendo multimedia (${uploadProgress}%)...` : actionLoading ? 'Iniciando...' : '¡Sí, Iniciar Difusión!'}
               </button>
             </div>
           </div>
