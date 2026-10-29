@@ -104,7 +104,7 @@ export const assembleMediaFromFirestoreChunks = async (campaignId, attachmentMet
     }
 
     try {
-        console.log(`📦 [BroadcastService] Reensamblando archivo multimedia local (${attachmentMeta.name}, ${attachmentMeta.totalChunks} fragmentos)...`);
+        console.log(`📦 [BroadcastService] Reensamblando archivo multimedia local (${attachmentMeta.name}, ${attachmentMeta.totalChunks} fragmentos esperados)...`);
         const chunksCol = collection(db, 'config', 'bot_broadcast', 'chunks');
         const q = query(chunksCol, orderBy('chunkIndex', 'asc'));
         const snapshot = await getDocs(q);
@@ -117,8 +117,15 @@ export const assembleMediaFromFirestoreChunks = async (campaignId, attachmentMet
         const chunks = [];
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
-            chunks.push({ index: data.chunkIndex, data: data.data });
+            // Filtrar estrictamente por campaignId si está disponible
+            if (!campaignId || !data.campaignId || data.campaignId === campaignId) {
+                chunks.push({ index: data.chunkIndex, data: data.data });
+            }
         });
+
+        if (attachmentMeta.totalChunks && chunks.length < attachmentMeta.totalChunks) {
+            console.warn(`⚠️ [BroadcastService] Fragmentos incompletos para campaña ${campaignId}: se esperaban ${attachmentMeta.totalChunks} y se obtuvieron ${chunks.length}.`);
+        }
 
         chunks.sort((a, b) => a.index - b.index);
         const fullBase64 = chunks.map(c => c.data).join('');
@@ -130,7 +137,7 @@ export const assembleMediaFromFirestoreChunks = async (campaignId, attachmentMet
         const localPath = path.join(tempDir, fileName);
 
         fs.writeFileSync(localPath, buffer);
-        console.log(`✅ [BroadcastService] Archivo multimedia reensamblado: ${fileName} (${(buffer.length / (1024 * 1024)).toFixed(2)} MB, Tipo: ${attachmentMeta.type.toUpperCase()})`);
+        console.log(`✅ [BroadcastService] Archivo multimedia reensamblado con éxito: ${fileName} (${(buffer.length / (1024 * 1024)).toFixed(2)} MB, Tipo: ${attachmentMeta.type.toUpperCase()})`);
 
         // Limpieza de fragmentos en Firestore de fondo
         (async () => {
@@ -173,25 +180,35 @@ export const assembleMediaFromFirestoreChunks = async (campaignId, attachmentMet
  * @returns {Promise<{ success: boolean, method: string }>}
  */
 export const sendBroadcastMediaMessage = async (provider, client, recipientJid, filePath, mediaType, fileName, caption) => {
+    let resolvedClient = client;
+    if (!resolvedClient && provider) {
+        try {
+            resolvedClient = await getWppClient(provider);
+        } catch (_) {}
+    }
+
     const displayName = fileName || path.basename(filePath);
     const resolvedType = mediaType || classifyMediaType(filePath).type;
 
     // 1. VIDEOS (MP4, WEBM, MOV, M4V)
     // Se envía como video nativo para que WhatsApp muestre la miniatura, controles de play/pause y sonido.
     if (resolvedType === 'video') {
-        if (client && typeof client.sendFile === 'function') {
+        if (resolvedClient && typeof resolvedClient.sendFile === 'function') {
             try {
-                await client.sendFile(recipientJid, filePath, {
+                console.log(`🎬 [BroadcastMedia] Despachando video nativo (${displayName}) a ${recipientJid}...`);
+                await resolvedClient.sendFile(recipientJid, filePath, {
                     filename: displayName,
                     caption: caption || '',
                     type: 'video',
                     waitForAck: false
                 });
+                console.log(`✅ [BroadcastMedia] Video enviado exitosamente a ${recipientJid}`);
                 return { success: true, method: 'client.sendFile:video' };
             } catch (errVideoOpt) {
                 console.warn(`⚠️ [BroadcastMedia] client.sendFile (options) falló: ${errVideoOpt.message}. Probando llamada posicional...`);
                 try {
-                    await client.sendFile(recipientJid, filePath, displayName, caption || '');
+                    await resolvedClient.sendFile(recipientJid, filePath, displayName, caption || '');
+                    console.log(`✅ [BroadcastMedia] Video enviado exitosamente (posicional) a ${recipientJid}`);
                     return { success: true, method: 'client.sendFile:positional' };
                 } catch (errVideoPos) {
                     console.warn(`⚠️ [BroadcastMedia] client.sendFile (posicional) falló: ${errVideoPos.message}`);

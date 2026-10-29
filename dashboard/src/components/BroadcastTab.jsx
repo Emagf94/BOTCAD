@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { collection, onSnapshot, query, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, setDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { resolveClientPhone } from '../utils/phoneUtils';
 import {
@@ -157,18 +157,33 @@ export default function BroadcastTab() {
   // Subir archivo en fragmentos a Firestore ('config/bot_broadcast/chunks')
   const uploadMediaInChunks = async (file, campaignId, onProgress) => {
     const CHUNK_SIZE = 350 * 1024; // 350 KB por fragmento (seguro para Firestore)
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
 
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i += 8192) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, len)));
+    // 1. Limpieza preventiva de fragmentos anteriores
+    const chunksCol = collection(db, 'config', 'bot_broadcast', 'chunks');
+    try {
+      const existingSnap = await getDocs(chunksCol);
+      if (!existingSnap.empty) {
+        const batch = writeBatch(db);
+        existingSnap.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (eClean) {
+      console.warn('Aviso limpiando fragmentos anteriores:', eClean);
     }
-    const base64 = btoa(binary);
+
+    // 2. Conversión a Base64 nativa de alto rendimiento con FileReader (soporta videos pesados sin lag)
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result || '';
+        const commaIdx = res.indexOf(',');
+        resolve(commaIdx >= 0 ? res.slice(commaIdx + 1) : res);
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
 
     const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
-    const chunksCol = collection(db, 'config', 'bot_broadcast', 'chunks');
 
     for (let i = 0; i < totalChunks; i++) {
       const start = i * CHUNK_SIZE;
