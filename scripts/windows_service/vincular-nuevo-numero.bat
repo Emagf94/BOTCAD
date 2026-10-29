@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0..\.."
 title Vincular Nuevo Numero de WhatsApp - CAD Bot
 color 0E
 

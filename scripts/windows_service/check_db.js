@@ -1,5 +1,5 @@
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from './src/firebase.js';
+import { db } from '../../src/firebase.js';
 
 async function check() {
     const ref = doc(db, 'config', 'general');

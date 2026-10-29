@@ -41,7 +41,6 @@ export const flowPagosFAQ = addKeyword(EVENTS.ACTION)
     })
     .addAnswer('Escribe *0* para volver al menú principal.', { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -63,7 +62,6 @@ export const flowFAQ = addKeyword(EVENTS.ACTION)
         '*0.* ⬅️ Volver al menú principal'
     ].join('\n'), { capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -76,7 +74,6 @@ export const flowFAQ = addKeyword(EVENTS.ACTION)
 export const flowEnvioDirectoArchivosLoop = addKeyword(EVENTS.ACTION)
     .addAction({ capture: true, idle: 600000 }, async (ctx, { state, gotoFlow, flowDynamic, provider }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -194,7 +191,6 @@ export const flowEnvioDirectoComentario = addKeyword(EVENTS.ACTION)
         { capture: true, delay: 1000, idle: 600000 },
         async (ctx, { state, gotoFlow, flowDynamic, provider }) => {
             if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-                console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
                 if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
                 return gotoFlow(flowAdminBridgeLoop);
             }
@@ -250,7 +246,6 @@ export const flowEnvioDirectoComentario = addKeyword(EVENTS.ACTION)
 export const flowEnvioDirectoArchivos = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { flowDynamic, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }

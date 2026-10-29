@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 title CAD Impresiones - Panel de Control de Auto-Inicio (Windows)
 color 0A
 
-set "BOT_DIR=%~dp0"
+set "BOT_DIR=%CD%\"
 set "BAT_PATH=%BOT_DIR%iniciar-bot-24-7.bat"
 set "VBS_PATH=%BOT_DIR%iniciar-invisible.vbs"
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"

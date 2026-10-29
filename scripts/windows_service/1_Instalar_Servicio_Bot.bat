@@ -18,8 +18,8 @@ if %errorLevel% == 0 (
     exit /b
 )
 
-:: Ir a la carpeta donde se encuentra este .bat
-cd /d "%~dp0"
+:: Ir a la raiz del proyecto
+cd /d "%~dp0..\.."
 
 echo.
 echo [1/2] Instalando libreria de servicios (node-windows)...
@@ -27,7 +27,7 @@ call npm install node-windows
 
 echo.
 echo [2/2] Registrando el Bot en Windows...
-node instalar_servicio.js
+node "%~dp0instalar_servicio.js"
 
 echo.
 pause

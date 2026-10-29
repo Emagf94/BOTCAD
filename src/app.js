@@ -3,7 +3,6 @@ import { MemoryDB as Database } from '@builderbot/bot';
 import { WPPConnectProvider as Provider } from '@builderbot/provider-wppconnect';
 import { initBotConfig } from './botConfig.js';
 import { allFlows } from './flows/index.js';
-import fs from 'fs';
 import {
     initSessionGuard,
     cleanCorruptLockfiles,
@@ -12,11 +11,11 @@ import {
     updateQRStatus,
     updateHostPhone
 } from './sessionGuard.js';
-import { activeBridgeChats, getWppClient, findActiveBridge, downloadAndSaveIncomingFile, deliverFileToRecipient } from './utils/helpers.js';
+import { getWppClient, findActiveBridge, downloadAndSaveIncomingFile, deliverFileToRecipient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
 import { initBroadcastService } from './services/broadcastService.js';
 import { initAdvisorService } from './services/advisorService.js';
-import { resolveAdvisorIdentity, isAdmin } from './services/advisorAuthService.js';
+import { resolveAdvisorIdentity } from './services/advisorAuthService.js';
 import { dispatchAdvisorCommand } from './services/commandDispatcher.js';
 import { handleFacturaUpload, isWaitingFacturaUpload } from './services/invoiceService.js';
 
@@ -81,13 +80,6 @@ const main = async () => {
 
     // 4. Base de datos de sesión en memoria
     const adapterDB = new Database();
-
-    // La intercepción ahora es manejada nativamente por el flujo de BuilderBot.
-    adapterProvider.on('message', (payload) => {
-        if (payload && payload.body) {
-            try { fs.appendFileSync('debug.log', `[MSG] FROM: ${payload.from} | BODY: ${payload.body}\n`); } catch(e){}
-        }
-    });
 
     // 5. Iniciar el bot y el servidor HTTP
     botInstance = await createBot({

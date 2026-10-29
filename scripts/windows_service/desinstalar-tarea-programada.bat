@@ -17,6 +17,7 @@ if %errorLevel% == 0 (
     exit /b
 )
 
+cd /d "%~dp0..\.."
 set "TASK_NAME=CAD_Bot_WhatsApp_24_7"
 
 echo [1/2] Eliminando Tarea Programada...

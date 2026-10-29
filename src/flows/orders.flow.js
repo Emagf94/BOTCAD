@@ -12,7 +12,6 @@ import { flowRecibirArchivos } from './files.flow.js';
 export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
     .addAnswer('📱 Debido a las nuevas políticas de privacidad, tu número está oculto. Por favor, escribe tu *número de teléfono o usuario (@)* para contactarte sobre el pedido:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -47,7 +46,6 @@ export const flowPedirTelefono = addKeyword(EVENTS.ACTION)
 export const flowPedirNombre = addKeyword(EVENTS.ACTION)
     .addAnswer('👤 Escribe tu *Nombre Completo* para registrar el pedido:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -70,7 +68,6 @@ export const flowPedirNombre = addKeyword(EVENTS.ACTION)
 export const flowInicializarPedido = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }

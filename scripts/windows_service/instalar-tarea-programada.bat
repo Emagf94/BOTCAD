@@ -27,7 +27,8 @@ if %errorLevel% == 0 (
 )
 
 echo.
-set "BOT_DIR=%~dp0"
+cd /d "%~dp0..\.."
+set "BOT_DIR=%CD%\"
 set "BAT_PATH=%BOT_DIR%iniciar-bot-24-7.bat"
 set "VBS_PATH=%BOT_DIR%iniciar-invisible.vbs"
 set "TASK_NAME=CAD_Bot_WhatsApp_24_7"

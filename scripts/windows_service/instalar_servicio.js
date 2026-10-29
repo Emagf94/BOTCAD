@@ -8,7 +8,7 @@ const __dirname = import.meta.dirname;
 const svc = new Service({
   name: 'CAD Bot WhatsApp',
   description: 'Bot de Impresiones CAD funcionando 24/7 en segundo plano de manera invisible.',
-  script: path.join(__dirname, 'src', 'app.js'),
+  script: path.join(__dirname, '..', '..', 'src', 'app.js'),
   // Le damos un poco más de RAM por si a caso (2GB)
   nodeOptions: [
     '--max_old_space_size=2048'

@@ -13,7 +13,6 @@ import { flowInicializarPedido } from './orders.flow.js';
 export const flowCarteleraMaterial = addKeyword(EVENTS.ACTION)
     .addAnswer(['🎨 *Material de la Cartelera*', '*1.* Bond', '*2.* Cartulina / Opalina', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -41,7 +40,6 @@ export const flowCarteleraMaterial = addKeyword(EVENTS.ACTION)
 export const flowMenuCarteleras = addKeyword(EVENTS.ACTION)
     .addAnswer(['📏 *Tamaño de Cartelera*', '*1.* A0 (Pliego 100x70 cm)', '*2.* A1 (Medio Pliego 70x50 cm)', '*3.* A2 (Cuarto Pliego 50x35 cm)', '*4.* A3 (Tabloide 42x30 cm)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -59,7 +57,6 @@ export const flowMenuCarteleras = addKeyword(EVENTS.ACTION)
 export const flowPlanosColor = addKeyword(EVENTS.ACTION)
     .addAnswer(['🎨 *Tipo de Color para Planos*', '*1.* Solo Líneas (Baja carga de tinta)', '*2.* Plenos / Renders (Alta carga de tinta)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -79,7 +76,6 @@ export const flowPlanosColor = addKeyword(EVENTS.ACTION)
 export const flowPlanosTipo = addKeyword(EVENTS.ACTION)
     .addAnswer(['🎨 *Color o B/N*', '*1.* Blanco y Negro', '*2.* A Color', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -100,7 +96,6 @@ export const flowPlanosTipo = addKeyword(EVENTS.ACTION)
 export const flowMenuPlanos = addKeyword(EVENTS.ACTION)
     .addAnswer(['📏 *Tamaño de Plano*', '*1.* A0 (Pliego 100x70 cm)', '*2.* A1 (Medio Pliego 70x50 cm)', '*3.* A2 (Cuarto Pliego 50x35 cm)', '*4.* A3 (Tabloide 42x30 cm)', '*5.* Carta (21.5x28 cm)', '*6.* Oficio (21.5x33 cm)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -118,7 +113,6 @@ export const flowMenuPlanos = addKeyword(EVENTS.ACTION)
 export const flowMenuFotos = addKeyword(EVENTS.ACTION)
     .addAnswer(['📸 *Tamaño de Fotografía (Brillante/Mate)*', '*1.* 10x15 cm', '*2.* A4 / Carta (21.5x28 cm)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -135,7 +129,6 @@ export const flowMenuFotos = addKeyword(EVENTS.ACTION)
 export const flowDocColor = addKeyword(EVENTS.ACTION)
     .addAnswer(['🎨 *Color o B/N*', '*1.* Blanco y Negro', '*2.* A Color', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -156,7 +149,6 @@ export const flowDocColor = addKeyword(EVENTS.ACTION)
 export const flowDocMaterial = addKeyword(EVENTS.ACTION)
     .addAnswer(['📄 *Material*', '*1.* Bond (Normal)', '*2.* Propalcote', '*3.* Opalina', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -173,7 +165,6 @@ export const flowDocMaterial = addKeyword(EVENTS.ACTION)
 export const flowDocTamano = addKeyword(EVENTS.ACTION)
     .addAnswer(['📏 *Tamaño del Documento*', '*1.* Carta (21.5x28 cm)', '*2.* Oficio (21.5x33 cm)', '*3.* Tabloide (42x30 cm)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -190,7 +181,6 @@ export const flowDocTamano = addKeyword(EVENTS.ACTION)
 export const flowMenuDocFotos = addKeyword(EVENTS.ACTION)
     .addAnswer(['📄 *Documentos y Fotos*', '*1.* Impresión de Documentos', '*2.* Impresión de Fotografías', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -207,7 +197,6 @@ export const flowMenuDocFotos = addKeyword(EVENTS.ACTION)
 export const flowMenuGranFormatoTamano = addKeyword(EVENTS.ACTION)
     .addAnswer(['📏 *Tamaño*', '*1.* 100x70 cm', '*2.* 70x50 cm', '*3.* 200x100 cm', '*4.* 80x120 cm', '*5.* 35x50 cm', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -226,7 +215,6 @@ export const flowMenuGranFormatoTamano = addKeyword(EVENTS.ACTION)
 export const flowMenuPasacalles = addKeyword(EVENTS.ACTION)
     .addAnswer(['📏 *Tamaño Pasacalle*', '*1.* 350x70 cm', '*2.* 600x70 cm', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -243,7 +231,6 @@ export const flowMenuPasacalles = addKeyword(EVENTS.ACTION)
 export const flowMenuGranFormato = addKeyword(EVENTS.ACTION)
     .addAnswer(['🏙️ *Gran Formato*', '*1.* Pendones', '*2.* Adhesivos', '*3.* Pasacalles', '*4.* Microperforados', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -262,7 +249,6 @@ export const flowMenuGranFormato = addKeyword(EVENTS.ACTION)
 export const flowMenuSublimacion = addKeyword(EVENTS.ACTION)
     .addAnswer(['🎁 *Artículos Sublimación*', '*1.* Mug Blanco Clásico', '*2.* Mug Mágico', '*3.* Termo Metálico', '*4.* Camiseta Blanca', '*5.* Camiseta Color', '*6.* Gorra Trucker', '*7.* Pad Mouse', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -281,7 +267,6 @@ export const flowMenuSublimacion = addKeyword(EVENTS.ACTION)
 export const flowMenuCarnets = addKeyword(EVENTS.ACTION)
     .addAnswer(['🪪 *Carnets y Cuerdas*', '*1.* Carnet 1 Cara', '*2.* Carnet 2 Caras', '*3.* Cuerda Porta Carnet Sola', '*4.* Cuerda Porta Carnet Completa', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -312,7 +297,6 @@ export const flowMenuOtrosServicios = addKeyword(EVENTS.ACTION)
         '🛑 *0.* Cancelar y volver al menú principal'
     ].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -337,7 +321,6 @@ export const flowMenuOtrosServicios = addKeyword(EVENTS.ACTION)
 export const flowConfirmarSello = addKeyword(EVENTS.ACTION)
     .addAnswer('¿Deseas pedir este modelo de sello?\n\n*1.* ✅ Sí, continuar con el pedido\n*2.* 🔄 No, ver otros modelos\n\n🛑 *0.* Cancelar', { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -354,7 +337,6 @@ export const flowConfirmarSello = addKeyword(EVENTS.ACTION)
 export const flowMenuSellos = addKeyword(EVENTS.ACTION)
     .addAnswer(['🔏 *Sellos*', '_Nota: Al seleccionar una opción, te enviaremos una imagen del modelo del sello._', '', '*1.* S-843', '*2.* S-830', '*3.* 913', '*4.* R552', '*5.* Fechador S829D', '*6.* Fechador S826D', '*7.* Lapicero S723/SP723', '*8.* R542', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack, flowDynamic }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }

@@ -475,7 +475,6 @@ export const flowAdminBridge = addKeyword(['!chatear', '!atender', '!fin', '!col
 
 export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider }) => {
     if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-        console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
         const cmd = ctx.body.trim().toLowerCase();
         if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) {
             return gotoFlow(flowAdminBridge);

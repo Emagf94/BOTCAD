@@ -20,7 +20,6 @@ import { flowResumenPedido } from './payment.flow.js';
 export const flowPreguntarPaginas = addKeyword(EVENTS.ACTION)
     .addAnswer('No pudimos contar las páginas automáticamente. ¿Cuántas *páginas* tiene este archivo?', { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, fallBack, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -38,7 +37,6 @@ export const flowPreguntarPaginas = addKeyword(EVENTS.ACTION)
 export const flowConfigurarArchivoPaso2 = addKeyword(EVENTS.ACTION)
     .addAnswer('¿Cuántas *copias* deseas de este archivo?', { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, fallBack, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -57,7 +55,6 @@ export const flowConfigurarArchivoPaso2 = addKeyword(EVENTS.ACTION)
 export const flowConfigurarArchivoPaso1 = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, flowDynamic, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -119,7 +116,6 @@ export const flowConfigurarArchivoPaso1 = addKeyword(EVENTS.ACTION)
 export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
     .addAction({ capture: true, idle: 600000 }, async (ctx, { state, gotoFlow, flowDynamic, provider }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -220,7 +216,6 @@ export const flowRecibirArchivosLoop = addKeyword(EVENTS.ACTION)
 export const flowRecibirArchivos = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, flowDynamic, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }

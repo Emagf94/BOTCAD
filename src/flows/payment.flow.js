@@ -12,7 +12,6 @@ import { flowCancelar, flowInactividad } from './main.flow.js';
 export const flowRecibirPagoLoop = addKeyword(EVENTS.ACTION)
     .addAction({ capture: true, idle: 600000 }, async (ctx, { state, provider, gotoFlow, flowDynamic }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -112,7 +111,6 @@ export const flowRecibirPago = addKeyword(EVENTS.ACTION)
 export const flowPagoEfectivo = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, provider, gotoFlow, flowDynamic }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }
@@ -161,7 +159,6 @@ export const flowOpcionesPago = addKeyword(EVENTS.ACTION)
         { capture: true, delay: 1500, idle: 600000 },
         async (ctx, { gotoFlow, fallBack }) => {
             if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-                console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
                 if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
                 return gotoFlow(flowAdminBridgeLoop);
             }
@@ -178,7 +175,6 @@ export const flowOpcionesPago = addKeyword(EVENTS.ACTION)
 export const flowResumenPedido = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { state, flowDynamic, gotoFlow }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
         }

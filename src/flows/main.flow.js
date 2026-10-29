@@ -37,7 +37,6 @@ import { flowFacturaElectronica } from './factura.flow.js';
 export const flowInactividad = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { endFlow, state, gotoFlow }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado') || cmd.startsWith('!difusion') || cmd.startsWith('!masivo') || cmd.startsWith('!confirmar') || cmd.startsWith('!cancelar')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -77,7 +76,6 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
         { capture: true, delay: 1500, idle: 600000 },
         async (ctx, { gotoFlow, fallBack, state, flowDynamic, provider }) => {
             if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-                console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
                 const cmd = ctx.body.trim().toLowerCase();
                 if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
                 return gotoFlow(flowAdminBridgeLoop);
@@ -208,7 +206,6 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
 export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
     .addAnswer('📱 Debido a las nuevas políticas de privacidad de Whatsapp, tu número está oculto. Por favor, escribe tu *número de teléfono o usuario (@)* para poder contactarte sobre tus pedidos:', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, state, provider, fallBack }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -288,7 +285,6 @@ export const flowContactUserCapture = addKeyword(EVENTS.ACTION)
 export const flowNameCapture = addKeyword(EVENTS.ACTION)
     .addAnswer('Para brindarte un mejor servicio, ¿cómo te llamas?', { capture: true, delay: 1500, idle: 600000 }, async (ctx, { gotoFlow, state, provider, fallBack }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -342,7 +338,6 @@ export const flowNameCapture = addKeyword(EVENTS.ACTION)
 export const flowWelcomeRegistered = addKeyword(EVENTS.ACTION)
     .addAction(async (ctx, { flowDynamic, state, gotoFlow, provider }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);
@@ -376,7 +371,6 @@ export const flowWelcomeRegistered = addKeyword(EVENTS.ACTION)
 export const flowWelcome = addKeyword(EVENTS.WELCOME)
     .addAction(async (ctx, { gotoFlow, state, flowDynamic, provider }) => {
         if (isAdmin(ctx) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
-            console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             const cmd = ctx.body.trim().toLowerCase();
             if (cmd.startsWith('!chatear') || cmd.startsWith('!atender') || cmd.startsWith('!fin') || cmd.startsWith('!cola') || cmd.startsWith('!estado')) return gotoFlow(flowAdminBridge);
             return gotoFlow(flowAdminBridgeLoop);

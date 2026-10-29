@@ -18,11 +18,11 @@ if %errorLevel% == 0 (
     exit /b
 )
 
-:: Ir a la carpeta donde se encuentra este .bat
-cd /d "%~dp0"
+:: Ir a la raiz del proyecto
+cd /d "%~dp0..\.."
 
 echo [1/1] Desregistrando el Bot de Windows...
-node desinstalar_servicio.js
+node "%~dp0desinstalar_servicio.js"
 
 echo.
 pause

@@ -1,18 +1,35 @@
 dist/*
-node_modules
+node_modules/
 .env
 
-*_sessions
+# Sesiones de WhatsApp
+*_sessions/
+bot_sessions/
+bot_sessions_backup/
 *tokens
 .wwebjs*
 
+# Logs y depuración
 *.log
+core.class.log
+queue.class.log
+debug.log
 logs/
+
+# Archivos multimedia y descargas temporales
 archivos_recibidos/
 downloads/
 temp_files/
 *qr.png
+bot.qr.png
+
+# Almacenamiento local de facturas (preserva directorios con .gitkeep)
+storage/facturas/*.pdf
+storage/facturas/temp/*
+!storage/facturas/.gitkeep
+!storage/facturas/temp/.gitkeep
+
+# Firebase y sistema operativo
 .firebase/
 .DS_Store
 Thumbs.db
-bot_sessions_backup/

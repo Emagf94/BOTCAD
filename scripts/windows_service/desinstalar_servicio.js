@@ -7,7 +7,7 @@ const __dirname = import.meta.dirname;
 // Crear el objeto de servicio apuntando a la misma config
 const svc = new Service({
   name: 'CAD Bot WhatsApp',
-  script: path.join(__dirname, 'src', 'app.js')
+  script: path.join(__dirname, '..', '..', 'src', 'app.js')
 });
 
 // Escuchar el evento de desinstalación

@@ -25,7 +25,8 @@ if %errorLevel% neq 0 (
     exit /b
 )
 
-set "BOT_DIR=%~dp0"
+cd /d "%~dp0..\.."
+set "BOT_DIR=%CD%\"
 set "BAT_PATH=%BOT_DIR%iniciar-bot-24-7.bat"
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "SHORTCUT_PATH=%STARTUP_DIR%\CAD_Bot_24_7.lnk"
@@ -36,8 +37,8 @@ set "SHORTCUT_PATH=%STARTUP_DIR%\CAD_Bot_24_7.lnk"
 echo [1/4] Desactivando servicios ocultos en segundo plano...
 
 :: Detener y desinstalar servicio node-windows invisible si estuviera activo
-if exist "%BOT_DIR%desinstalar_servicio.js" (
-    node "%BOT_DIR%desinstalar_servicio.js" >nul 2>&1
+if exist "%BOT_DIR%scripts\windows_service\desinstalar_servicio.js" (
+    node "%BOT_DIR%scripts\windows_service\desinstalar_servicio.js" >nul 2>&1
 )
 sc stop "CAD Bot WhatsApp" >nul 2>&1
 sc delete "CAD Bot WhatsApp" >nul 2>&1
