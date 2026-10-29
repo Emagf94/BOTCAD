@@ -1,7 +1,30 @@
 import fs from 'fs';
 import path from 'path';
-import { PDFParse } from 'pdf-parse';
 import { downloadAndSaveIncomingFile, deliverFileToRecipient, getWppClient } from '../utils/helpers.js';
+
+// =============================================================================
+// CARGA DINÁMICA DE DEPENDENCIAS (BLINDAJE CONTRA CRASHEOS)
+// =============================================================================
+
+let PDFParseClass = null;
+
+/**
+ * Carga de forma dinámica y resiliente la librería pdf-parse.
+ * Evita que el bot falle al arrancar si la dependencia no ha sido instalada aún en el entorno.
+ * 
+ * @returns {Promise<any|null>}
+ */
+export const loadPdfParser = async () => {
+    if (PDFParseClass) return PDFParseClass;
+    try {
+        const mod = await import('pdf-parse');
+        PDFParseClass = mod.PDFParse || mod.default?.PDFParse || mod.default;
+        return PDFParseClass;
+    } catch (err) {
+        console.warn('⚠️ [InvoiceService] La librería pdf-parse no está instalada en este entorno:', err.message);
+        return null;
+    }
+};
 
 // =============================================================================
 // CONFIGURACIÓN Y CONSTANTES
@@ -123,7 +146,19 @@ export const extractDataFromInvoicePdf = async (bufferOrPath, options = {}) => {
             return { success: false, nit: null, date: normalizeDateToYMD(), consecutive: String(Date.now()), error: 'Buffer o archivo inválido' };
         }
 
-        const parser = new PDFParse({ data: buffer });
+        const Parser = await loadPdfParser();
+        if (!Parser) {
+            console.warn('⚠️ [InvoiceService] pdf-parse no disponible en este entorno. Se solicitará el NIT manualmente.');
+            return {
+                success: false,
+                nit: null,
+                date: normalizeDateToYMD(),
+                consecutive: String(Date.now()),
+                error: 'pdf-parse no disponible en el sistema'
+            };
+        }
+
+        const parser = new Parser({ data: buffer });
         const parseResult = await parser.getText();
         await parser.destroy().catch(() => {});
 
