@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { BOT_SETTINGS, BOT_MEDIA, BOT_ADVISORS, BOT_SCHEDULE, DEFAULT_SCHEDULE, getAdvisorName } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
+import { isAdmin as authIsAdmin } from '../services/advisorAuthService.js';
 import {
     getWppClient,
     patchWppMediaPrep,
@@ -367,6 +368,7 @@ export const safeSendSticker = async (provider, jid, stickerPath) => {
  * @returns {boolean} true si es administrador o asesor con permisos de comandos
  */
 export const isAdmin = (fromOrCtx) => {
+    return authIsAdmin(fromOrCtx);
     if (!fromOrCtx) return false;
     
     let candidates = [];

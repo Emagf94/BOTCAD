@@ -12,10 +12,12 @@ import {
     updateQRStatus,
     updateHostPhone
 } from './sessionGuard.js';
-import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
+import { activeBridgeChats, getWppClient, findActiveBridge, downloadAndSaveIncomingFile, deliverFileToRecipient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
 import { initBroadcastService } from './services/broadcastService.js';
 import { initAdvisorService } from './services/advisorService.js';
+import { resolveAdvisorIdentity, isAdmin } from './services/advisorAuthService.js';
+import { dispatchAdvisorCommand } from './services/commandDispatcher.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -103,6 +105,85 @@ const main = async () => {
         const from = messageCtxInComing?.from;
         if (!from) return originalHandleMsg(messageCtxInComing);
 
+        const rawBody = (messageCtxInComing?.body || '').trim();
+        const isCommand = rawBody.startsWith('!');
+        const activeClientPhone = findActiveBridge(from);
+
+        // ═════════════════════════════════════════════════════════════════════
+        // PILAR 1: INTERCEPTOR MAESTRO DE COMANDOS DE ASESORES / ADMINISTRADORES
+        // ═════════════════════════════════════════════════════════════════════
+        if (isCommand) {
+            try {
+                const wppClient = await getWppClient(adapterProvider).catch(() => null);
+                const authInfo = await resolveAdvisorIdentity(messageCtxInComing, wppClient);
+
+                if (authInfo.isAuthorized) {
+                    console.log(`🛡️ [MasterInterceptor] Interceptando comando "${rawBody}" de "${authInfo.advisor?.name || 'Asesor'}" (ID: ${authInfo.matchedIdentifier})`);
+
+                    // 1. Limpiar estados residuales de captura de clientes en BuilderBot para este asesor
+                    try {
+                        if (botInstance.stateHandler?.clear) {
+                            botInstance.stateHandler.clear(from);
+                        }
+                        if (adapterDB?.list && Array.isArray(adapterDB.list)) {
+                            adapterDB.list = adapterDB.list.filter(item => item.from !== from);
+                        }
+                    } catch (eClean) {}
+
+                    // 2. Ejecutar a través del Despachador Centralizado
+                    await dispatchAdvisorCommand({
+                        ctx: messageCtxInComing,
+                        provider: adapterProvider,
+                        authInfo
+                    });
+                    return; // Retorno inmediato: BuilderBot NUNCA interferirá con el comando
+                }
+            } catch (errAuth) {
+                console.error('⚠️ [MasterInterceptor] Error evaluando identidad de asesor:', errAuth);
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // PILAR 2: PUENTE DIRECTO DE CHAT ACTIVO ASESOR -> CLIENTE
+        // ═════════════════════════════════════════════════════════════════════
+        // Si el asesor está en soporte activo y envía texto normal o archivos (no comandos)
+        if (activeClientPhone && !isCommand) {
+            try {
+                const wppClient = await getWppClient(adapterProvider).catch(() => null);
+                const authInfo = await resolveAdvisorIdentity(messageCtxInComing, wppClient);
+
+                if (authInfo.isAuthorized) {
+                    const esMedia = (rawBody.includes('_media_') || rawBody.includes('_document_') || rawBody.includes('_image_') || rawBody.includes('_voice_note_') || rawBody.includes('_video_') || rawBody.includes('_event_')) ||
+                        messageCtxInComing.hasMedia || messageCtxInComing.message?.imageMessage || messageCtxInComing.message?.documentMessage;
+
+                    let caption = rawBody;
+                    if (caption.includes('_event_') || caption.includes('_media_') || caption.includes('_document_') || caption.includes('_image_') || caption.includes('_voice_note_') || caption.includes('_video_')) {
+                        caption = '';
+                    }
+
+                    const advName = authInfo.advisor?.name || 'Asesor';
+
+                    if (esMedia) {
+                        try {
+                            const fileInfo = await downloadAndSaveIncomingFile(messageCtxInComing, adapterProvider, './downloads');
+                            await deliverFileToRecipient(adapterProvider, activeClientPhone, fileInfo, `👨‍💻 *${advName}:* ${caption}`);
+                        } catch (errMedia) {
+                            console.error('Error enviando media asesor -> cliente:', errMedia);
+                            await adapterProvider.sendMessage(activeClientPhone, `👨‍💻 *${advName}:* [Archivo/Audio enviado]`, {});
+                        }
+                    } else {
+                        await adapterProvider.sendMessage(activeClientPhone, `👨‍💻 *${advName}:* ${rawBody}`, {});
+                    }
+                    return; // Retorno inmediato: el mensaje ya fue entregado al cliente
+                }
+            } catch (errBridge) {
+                console.error('⚠️ [MasterBridge] Error en reenvío asesor -> cliente:', errBridge);
+            }
+        }
+
+        // =====================================================================
+        // COLA SECUENCIAL POR USUARIO (Para flujos normales de clientes)
+        // =====================================================================
         const previousPromise = userMessageQueues.get(from) || Promise.resolve();
         const currentPromise = previousPromise
             .catch(() => {})

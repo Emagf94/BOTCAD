@@ -6,7 +6,7 @@ import {
   CheckCircle2, AlertTriangle, Trash2, Edit3, X,
   Save, RefreshCw, UserCheck, MessageSquare,
   ShoppingBag, Terminal, Power, Clock, Calendar, Send,
-  Zap, Sun, Moon, Copy, Plus, Sparkles
+  Zap, Sun, Moon, Copy, Plus, Sparkles, HelpCircle, Radio, Headphones
 } from 'lucide-react';
 
 const INITIAL_ADVISORS = [
@@ -19,7 +19,9 @@ const INITIAL_ADVISORS = [
     active: true,
     receiveSupport: true,
     receiveOrders: true,
-    canExecuteCommands: true
+    canExecuteCommands: true,
+    canManageSupport: true,
+    canBroadcast: true
   },
   {
     id: 'adv_3184849332',
@@ -30,7 +32,9 @@ const INITIAL_ADVISORS = [
     active: true,
     receiveSupport: true,
     receiveOrders: false,
-    canExecuteCommands: true
+    canExecuteCommands: true,
+    canManageSupport: true,
+    canBroadcast: false
   },
   {
     id: 'adv_3136303477',
@@ -41,7 +45,9 @@ const INITIAL_ADVISORS = [
     active: true,
     receiveSupport: true,
     receiveOrders: false,
-    canExecuteCommands: true
+    canExecuteCommands: true,
+    canManageSupport: true,
+    canBroadcast: false
   }
 ];
 
@@ -95,8 +101,12 @@ export default function AdvisorsTab() {
     active: true,
     receiveSupport: true,
     receiveOrders: false,
-    canExecuteCommands: true
+    canExecuteCommands: true,
+    canManageSupport: true,
+    canBroadcast: false
   });
+
+  const [commandsGuideOpen, setCommandsGuideOpen] = useState(false);
 
   // Simulator & Test Mode State
   const [simUseRealtime, setSimUseRealtime] = useState(true);
@@ -567,6 +577,32 @@ export default function AdvisorsTab() {
   };
 
   // Modal Asesores Handlers
+  const handleRoleChange = (newRole) => {
+    if (newRole === 'admin') {
+      setFormData(prev => ({
+        ...prev,
+        role: 'admin',
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: true,
+        receiveSupport: true,
+        receiveOrders: true
+      }));
+    } else if (newRole === 'advisor') {
+      setFormData(prev => ({
+        ...prev,
+        role: 'advisor',
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: false,
+        receiveSupport: true,
+        receiveOrders: false
+      }));
+    } else {
+      setFormData(prev => ({ ...prev, role: newRole }));
+    }
+  };
+
   const handleOpenModal = (adv = null) => {
     if (adv) {
       setEditingAdvisor(adv);
@@ -578,7 +614,9 @@ export default function AdvisorsTab() {
         active: adv.active !== false,
         receiveSupport: adv.receiveSupport !== false,
         receiveOrders: !!adv.receiveOrders,
-        canExecuteCommands: adv.canExecuteCommands !== false
+        canExecuteCommands: adv.canExecuteCommands !== false,
+        canManageSupport: adv.canManageSupport !== undefined ? !!adv.canManageSupport : true,
+        canBroadcast: adv.canBroadcast !== undefined ? !!adv.canBroadcast : (adv.role === 'admin')
       });
     } else {
       setEditingAdvisor(null);
@@ -590,7 +628,9 @@ export default function AdvisorsTab() {
         active: true,
         receiveSupport: true,
         receiveOrders: false,
-        canExecuteCommands: true
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: false
       });
     }
     setModalOpen(true);
@@ -631,7 +671,9 @@ export default function AdvisorsTab() {
             active: formData.active,
             receiveSupport: formData.receiveSupport,
             receiveOrders: formData.receiveOrders,
-            canExecuteCommands: formData.canExecuteCommands
+            canExecuteCommands: formData.canExecuteCommands,
+            canManageSupport: formData.canManageSupport,
+            canBroadcast: formData.canBroadcast
           };
         }
         return a;
@@ -655,7 +697,9 @@ export default function AdvisorsTab() {
         active: formData.active,
         receiveSupport: formData.receiveSupport,
         receiveOrders: formData.receiveOrders,
-        canExecuteCommands: formData.canExecuteCommands
+        canExecuteCommands: formData.canExecuteCommands,
+        canManageSupport: formData.canManageSupport,
+        canBroadcast: formData.canBroadcast
       };
       updatedList = [...advisors, newAdv];
     }
@@ -973,7 +1017,7 @@ export default function AdvisorsTab() {
             </div>
           </div>
 
-          {/* Search Bar */}
+          {/* Search Bar & Guía de Comandos */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -992,7 +1036,78 @@ export default function AdvisorsTab() {
                 style={{ paddingLeft: '38px', height: '40px', fontSize: '0.88rem' }}
               />
             </div>
+
+            <button
+              onClick={() => setCommandsGuideOpen(!commandsGuideOpen)}
+              className="btn btn-secondary"
+              style={{
+                fontSize: '0.84rem',
+                gap: '8px',
+                padding: '8px 14px',
+                background: commandsGuideOpen ? 'rgba(59, 130, 246, 0.2)' : 'var(--bg-canvas)',
+                border: '1px solid ' + (commandsGuideOpen ? 'rgba(59, 130, 246, 0.4)' : 'var(--border-subtle)'),
+                color: commandsGuideOpen ? '#93c5fd' : 'var(--text-muted)'
+              }}
+            >
+              <HelpCircle size={16} />
+              <span>{commandsGuideOpen ? 'Ocultar Guía de Comandos' : '📖 Guía de Comandos & Roles'}</span>
+            </button>
           </div>
+
+          {/* Guía Rápida de Comandos y Privilegios */}
+          {commandsGuideOpen && (
+            <div className="glass-panel" style={{
+              padding: '18px 20px',
+              marginBottom: '24px',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              background: 'linear-gradient(135deg, rgba(30, 58, 138, 0.15) 0%, rgba(15, 23, 42, 0.4) 100%)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Terminal size={18} color="#60a5fa" />
+                  <h4 style={{ color: '#fff', fontSize: '1rem', fontWeight: 700 }}>
+                    Guía de Comandos de WhatsApp según Rol y Privilegio
+                  </h4>
+                </div>
+                <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#93c5fd' }}>
+                  Sincronizado con el Bot
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', fontSize: '0.82rem' }}>
+                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <strong style={{ color: '#c4b5fd', display: 'block', marginBottom: '6px' }}>
+                    🛡️ Rol Administrador (Acceso Total):
+                  </strong>
+                  <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
+                    <li><strong style={{ color: '#fff' }}>!difusion [texto]</strong>: Prepara envío masivo con muestra y anti-ban.</li>
+                    <li><strong style={{ color: '#fff' }}>!confirmar / !cancelar</strong>: Dispara o cancela campaña de difusión.</li>
+                    <li><strong style={{ color: '#fff' }}>!equipo</strong> o <strong style={{ color: '#fff' }}>!asesores</strong>: Estado y líneas de asesores en WhatsApp.</li>
+                    <li><strong style={{ color: '#fff' }}>!horario</strong>: Consulta franjas de atención y modo del bot.</li>
+                    <li>Todos los comandos de soporte indicados al lado.</li>
+                  </ul>
+                </div>
+
+                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <strong style={{ color: '#34d399', display: 'block', marginBottom: '6px' }}>
+                    👨‍💻 Rol Asesor (Atención de Clientes):
+                  </strong>
+                  <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
+                    <li><strong style={{ color: '#fff' }}>!atender</strong>: Toma de inmediato al cliente esperando soporte.</li>
+                    <li><strong style={{ color: '#fff' }}>!chatear [teléfono]</strong>: Inicia soporte con un número específico.</li>
+                    <li><strong style={{ color: '#fff' }}>!cola</strong> o <strong style={{ color: '#fff' }}>!estado</strong>: Lista clientes pendientes y asuntos.</li>
+                    <li><strong style={{ color: '#fff' }}>!fin</strong>: Finaliza chat con cliente y reanuda el bot.</li>
+                    <li><strong style={{ color: '#fff' }}>!ayuda</strong> o <strong style={{ color: '#fff' }}>!vincular</strong>: Menú personalizado y comprobación de ID.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '12px', fontSize: '0.78rem', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={14} />
+                <span>Cualquier asesor agregado en esta pantalla puede escribir de inmediato <strong>!ayuda</strong> o <strong>!cola</strong> a la línea del bot.</span>
+              </div>
+            </div>
+          )}
 
           {/* Advisors Grid */}
           {loading ? (
@@ -1058,12 +1173,20 @@ export default function AdvisorsTab() {
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
                               <span className="badge" style={{
-                                background: adv.role === 'admin' ? 'rgba(139, 92, 246, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                                color: adv.role === 'admin' ? '#c4b5fd' : '#93c5fd',
+                                background: adv.role === 'admin'
+                                  ? 'rgba(139, 92, 246, 0.2)'
+                                  : adv.role === 'custom'
+                                    ? 'rgba(234, 179, 8, 0.2)'
+                                    : 'rgba(59, 130, 246, 0.2)',
+                                color: adv.role === 'admin'
+                                  ? '#c4b5fd'
+                                  : adv.role === 'custom'
+                                    ? '#fde047'
+                                    : '#93c5fd',
                                 fontSize: '0.72rem',
                                 padding: '2px 8px'
                               }}>
-                                {adv.role === 'admin' ? 'Administrador' : 'Asesor'}
+                                {adv.role === 'admin' ? 'Administrador' : adv.role === 'custom' ? 'Personalizado' : 'Asesor'}
                               </span>
                               <span style={{
                                 fontSize: '0.72rem',
@@ -1127,51 +1250,48 @@ export default function AdvisorsTab() {
                           </strong>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                           <span style={{ color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Shield size={14} />
-                            WhatsApp LID:
+                            Dispositivo:
                           </span>
-                          <span style={{
-                            color: adv.lid ? '#93c5fd' : 'var(--text-dim)',
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: '0.78rem'
-                          }}>
-                            {adv.lid ? adv.lid : 'No asignado (opcional)'}
-                          </span>
+                          {adv.lid ? (
+                            <span style={{
+                              color: '#34d399',
+                              background: 'rgba(16, 185, 129, 0.12)',
+                              border: '1px solid rgba(16, 185, 129, 0.3)',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '0.74rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }} title={`LID: ${adv.lid}`}>
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                              LID: {adv.lid.length > 12 ? `${adv.lid.substring(0, 10)}...` : adv.lid}
+                            </span>
+                          ) : (
+                            <span style={{
+                              color: '#fbbf24',
+                              background: 'rgba(245, 158, 11, 0.12)',
+                              border: '1px solid rgba(245, 158, 11, 0.3)',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.72rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }} title="El bot vinculará automáticamente el identificador de WhatsApp cuando este asesor envíe su primer comando">
+                              <Sparkles size={11} />
+                              Auto-vincular
+                            </span>
+                          )}
                         </div>
                       </div>
 
                       {/* Permissions Badges */}
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '12px' }}>
-                        <span style={{
-                          fontSize: '0.72rem',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          background: adv.receiveSupport !== false ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.04)',
-                          color: adv.receiveSupport !== false ? '#34d399' : 'var(--text-dim)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}>
-                          <MessageSquare size={12} />
-                          Soporte
-                        </span>
-
-                        <span style={{
-                          fontSize: '0.72rem',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          background: adv.receiveOrders ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.04)',
-                          color: adv.receiveOrders ? '#fbbf24' : 'var(--text-dim)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}>
-                          <ShoppingBag size={12} />
-                          Pedidos
-                        </span>
-
                         <span style={{
                           fontSize: '0.72rem',
                           padding: '3px 8px',
@@ -1185,6 +1305,66 @@ export default function AdvisorsTab() {
                           <Terminal size={12} />
                           Comandos
                         </span>
+
+                        <span style={{
+                          fontSize: '0.72rem',
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          background: adv.canManageSupport !== false ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255,255,255,0.04)',
+                          color: adv.canManageSupport !== false ? '#22d3ee' : 'var(--text-dim)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          <Headphones size={12} />
+                          Atender Cola
+                        </span>
+
+                        {adv.canBroadcast && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(236, 72, 153, 0.15)',
+                            color: '#f472b6',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <Radio size={12} />
+                            Difusión
+                          </span>
+                        )}
+
+                        <span style={{
+                          fontSize: '0.72rem',
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          background: adv.receiveSupport !== false ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.04)',
+                          color: adv.receiveSupport !== false ? '#34d399' : 'var(--text-dim)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          <MessageSquare size={12} />
+                          Alertas Soporte
+                        </span>
+
+                        {adv.receiveOrders && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(245, 158, 11, 0.15)',
+                            color: '#fbbf24',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <ShoppingBag size={12} />
+                            Pedidos
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -2389,8 +2569,9 @@ export default function AdvisorsTab() {
                     value={formData.lid}
                     onChange={(e) => setFormData({ ...formData, lid: e.target.value })}
                   />
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginTop: '4px', display: 'block' }}>
-                    ID en WhatsApp Web / PC.
+                  <span style={{ fontSize: '0.72rem', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Sparkles size={12} />
+                    Auto-vinculación activa: si lo dejas vacío, el bot asociará el dispositivo al primer comando.
                   </span>
                 </div>
               </div>
@@ -2401,11 +2582,15 @@ export default function AdvisorsTab() {
                 </label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                  onChange={(e) => handleRoleChange(e.target.value)}
                 >
-                  <option value="advisor">Asesor de Ventas & Soporte</option>
-                  <option value="admin">Administrador General</option>
+                  <option value="advisor">Asesor de Ventas & Soporte (Atención + Comandos + Soporte)</option>
+                  <option value="admin">Administrador General (Acceso Total + Difusiones + Configuración)</option>
+                  <option value="custom">Personalizado (Permisos a la medida)</option>
                 </select>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginTop: '4px', display: 'block' }}>
+                  Al seleccionar un rol predefinido se ajustan automáticamente los permisos recomendados.
+                </span>
               </div>
 
               <div style={{
@@ -2436,39 +2621,90 @@ export default function AdvisorsTab() {
 
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                   <div>
-                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'block' }}>Recibir Alertas de Soporte</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>Recibe la alerta cuando un cliente pide asesor (!atender)</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={formData.receiveSupport}
-                    onChange={(e) => setFormData({ ...formData, receiveSupport: e.target.checked })}
-                    style={{ width: '18px', height: '18px' }}
-                  />
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                  <div>
-                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'block' }}>Recibir Alertas de Pedidos</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>Recibe los pedidos confirmados y comprobantes</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={formData.receiveOrders}
-                    onChange={(e) => setFormData({ ...formData, receiveOrders: e.target.checked })}
-                    style={{ width: '18px', height: '18px' }}
-                  />
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                  <div>
-                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'block' }}>Ejecutar Comandos en WhatsApp</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>Autorizado para usar !atender, !chatear, !fin y !cola</span>
+                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Terminal size={14} color="#c4b5fd" />
+                      Ejecutar Comandos en WhatsApp
+                    </span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Permite usar !ayuda, !estado, !cola, !horario, !vincular
+                    </span>
                   </div>
                   <input
                     type="checkbox"
                     checked={formData.canExecuteCommands}
-                    onChange={(e) => setFormData({ ...formData, canExecuteCommands: e.target.checked })}
+                    onChange={(e) => setFormData({ ...formData, canExecuteCommands: e.target.checked, role: 'custom' })}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                  <div>
+                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Headphones size={14} color="#22d3ee" />
+                      Atender Clientes y Cola de Soporte
+                    </span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Permite usar !atender, !chatear, !fin y conectar en directo con clientes
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.canManageSupport}
+                    onChange={(e) => setFormData({ ...formData, canManageSupport: e.target.checked, role: 'custom' })}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                  <div>
+                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Radio size={14} color="#f472b6" />
+                      Crear y Enviar Difusiones Masivas
+                    </span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Permite usar !difusion, !confirmar, !cancelar
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.canBroadcast}
+                    onChange={(e) => setFormData({ ...formData, canBroadcast: e.target.checked, role: 'custom' })}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                  <div>
+                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <MessageSquare size={14} color="#34d399" />
+                      Recibir Alertas de Soporte
+                    </span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Recibe la notificación cuando un cliente solicita asesor humano
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.receiveSupport}
+                    onChange={(e) => setFormData({ ...formData, receiveSupport: e.target.checked, role: 'custom' })}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                  <div>
+                    <span style={{ fontSize: '0.88rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <ShoppingBag size={14} color="#fbbf24" />
+                      Recibir Alertas de Pedidos
+                    </span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Recibe los pedidos confirmados y comprobantes de pago
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.receiveOrders}
+                    onChange={(e) => setFormData({ ...formData, receiveOrders: e.target.checked, role: 'custom' })}
                     style={{ width: '18px', height: '18px' }}
                   />
                 </label>

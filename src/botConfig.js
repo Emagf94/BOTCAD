@@ -146,7 +146,9 @@ export const BOT_ADVISORS = [
         active: true,
         receiveSupport: true,
         receiveOrders: true,
-        canExecuteCommands: true
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: true
     },
     {
         id: 'adv_3184849332',
@@ -157,7 +159,9 @@ export const BOT_ADVISORS = [
         active: true,
         receiveSupport: true,
         receiveOrders: false,
-        canExecuteCommands: true
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: false
     },
     {
         id: 'adv_3136303477',
@@ -168,7 +172,9 @@ export const BOT_ADVISORS = [
         active: true,
         receiveSupport: true,
         receiveOrders: false,
-        canExecuteCommands: true
+        canExecuteCommands: true,
+        canManageSupport: true,
+        canBroadcast: false
     }
 ];
 
@@ -457,8 +463,16 @@ export const initBotConfig = async () => {
         if (snapshot.exists()) {
             const data = snapshot.data();
             const rawList = Array.isArray(data?.advisors) ? data.advisors : (Array.isArray(data?.list) ? data.list : []);
+            const normalizedList = rawList.map(a => {
+                const isAdminRole = (a.role === 'admin');
+                return {
+                    ...a,
+                    canManageSupport: a.canManageSupport !== undefined ? !!a.canManageSupport : true,
+                    canBroadcast: a.canBroadcast !== undefined ? !!a.canBroadcast : isAdminRole
+                };
+            });
             BOT_ADVISORS.length = 0;
-            BOT_ADVISORS.push(...rawList);
+            BOT_ADVISORS.push(...normalizedList);
 
             // Recomputar teléfonos de soporte y comandos activos para compatibilidad total
             const activeSupport = rawList
