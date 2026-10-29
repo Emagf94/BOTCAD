@@ -172,6 +172,110 @@ export const BOT_ADVISORS = [
     }
 ];
 
+// ==========================================
+// HORARIO DE ATENCIÓN Y MODO DE PRUEBA
+// ==========================================
+export const DEFAULT_SCHEDULE = {
+    mode: 'auto', // 'auto' | 'always_open' | 'always_closed'
+    timezone: 'America/Bogota',
+    days: {
+        1: { name: 'Lunes', enabled: true, slots: [{ start: '08:30', end: '12:30' }, { start: '14:00', end: '18:00' }] },
+        2: { name: 'Martes', enabled: true, slots: [{ start: '08:30', end: '12:30' }, { start: '14:00', end: '18:00' }] },
+        3: { name: 'Miércoles', enabled: true, slots: [{ start: '08:30', end: '12:30' }, { start: '14:00', end: '18:00' }] },
+        4: { name: 'Jueves', enabled: true, slots: [{ start: '08:30', end: '12:30' }, { start: '14:00', end: '18:00' }] },
+        5: { name: 'Viernes', enabled: true, slots: [{ start: '08:30', end: '12:30' }, { start: '14:00', end: '18:00' }] },
+        6: { name: 'Sábado', enabled: false, slots: [{ start: '09:00', end: '13:00' }] },
+        0: { name: 'Domingo', enabled: false, slots: [] }
+    },
+    outOfHoursMessage: '🌙 *Fuera de horario*\n\nActualmente nuestros asesores no están disponibles.\nNuestro horario de atención es:\n{schedule_summary}\n\nEscribe *0* para volver al menú principal.',
+    testMode: {
+        enabled: false,
+        bypassSchedule: true,
+        testPhones: ['573184849332'],
+        notifyOnlyTestAdvisors: false
+    }
+};
+
+export const BOT_SCHEDULE = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
+
+/**
+ * Genera un resumen legible en texto del horario configurado para mostrar a los clientes.
+ * @param {object} [customSchedule] 
+ * @returns {string} Resumen de horario (ej. "Lunes a viernes de 8:30am a 12:30pm y de 2:00pm a 6:00pm")
+ */
+export const formatScheduleSummary = (customSchedule = null) => {
+    const sched = customSchedule || BOT_SCHEDULE;
+    if (sched.mode === 'always_open') return 'Atención 24 horas al día, 7 días a la semana.';
+    if (sched.mode === 'always_closed') return 'Actualmente cerrado por mantenimiento o descanso.';
+
+    const days = sched.days || DEFAULT_SCHEDULE.days;
+    const formatTime12h = (t) => {
+        if (!t) return '';
+        const [hStr, mStr] = t.split(':');
+        const h = parseInt(hStr, 10);
+        const m = parseInt(mStr || '0', 10);
+        const ampm = h >= 12 ? 'pm' : 'am';
+        const h12 = h % 12 || 12;
+        return m === 0 ? `${h12}:00${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`;
+    };
+
+    const formatDaySlots = (slots) => {
+        if (!slots || slots.length === 0) return 'Cerrado';
+        return slots.map(s => `${formatTime12h(s.start)} a ${formatTime12h(s.end)}`).join(' y de ');
+    };
+
+    // Verificar si Lunes a Viernes tienen exactamente el mismo horario
+    const monFriSlots = JSON.stringify(days[1]?.slots || []);
+    const isMonFriSame = [2, 3, 4, 5].every(d => days[d]?.enabled === days[1]?.enabled && JSON.stringify(days[d]?.slots || []) === monFriSlots);
+
+    const parts = [];
+    if (days[1]?.enabled && isMonFriSame) {
+        parts.push(`Lunes a viernes de ${formatDaySlots(days[1].slots)}.`);
+    } else {
+        const dayKeys = [1, 2, 3, 4, 5];
+        for (const k of dayKeys) {
+            const d = days[k];
+            if (d?.enabled && d.slots?.length > 0) {
+                parts.push(`${d.name}: de ${formatDaySlots(d.slots)}.`);
+            }
+        }
+    }
+
+    if (days[6]?.enabled && days[6].slots?.length > 0) {
+        parts.push(`Sábados de ${formatDaySlots(days[6].slots)}.`);
+    }
+    if (days[0]?.enabled && days[0].slots?.length > 0) {
+        parts.push(`Domingos de ${formatDaySlots(days[0].slots)}.`);
+    }
+
+    if (parts.length === 0) return 'Sin horarios de atención activos.';
+    return parts.join('\n');
+};
+
+/**
+ * Obtiene el mensaje formateado de fuera de horario interpolando variables dinámicas.
+ * @param {object} [customSchedule]
+ * @param {object} [extraVariables]
+ * @returns {string} Mensaje final para el cliente
+ */
+export const getOutOfHoursMessage = (customSchedule = null, extraVariables = {}) => {
+    const sched = customSchedule || BOT_SCHEDULE;
+    let template = sched.outOfHoursMessage || DEFAULT_SCHEDULE.outOfHoursMessage;
+    const summary = formatScheduleSummary(sched);
+
+    const vars = {
+        schedule_summary: summary,
+        botName: BOT_SETTINGS.botName || 'Cadi',
+        adminPhone: (BOT_SETTINGS.adminSupportPhone || '573184849332').replace('@c.us', ''),
+        ...extraVariables
+    };
+
+    for (const [k, v] of Object.entries(vars)) {
+        template = template.replaceAll(`{${k}}`, v ?? '');
+    }
+    return template;
+};
+
 /**
  * Busca y retorna el nombre configurado del asesor a partir de su JID, teléfono o LID.
  * @param {string|object} fromOrCtx
@@ -386,6 +490,23 @@ export const initBotConfig = async () => {
             }
             if (activeEscapes.length > 0) {
                 BOT_SETTINGS.adminEscapes = Array.from(new Set([...(BOT_SETTINGS.adminEscapes || []), ...activeEscapes]));
+            }
+
+            // Sincronizar Horario de Atención y Modo de Prueba de Asesores
+            if (data?.schedule) {
+                Object.assign(BOT_SCHEDULE, {
+                    ...DEFAULT_SCHEDULE,
+                    ...data.schedule,
+                    days: {
+                        ...DEFAULT_SCHEDULE.days,
+                        ...(data.schedule.days || {})
+                    },
+                    testMode: {
+                        ...DEFAULT_SCHEDULE.testMode,
+                        ...(data.schedule.testMode || {})
+                    }
+                });
+                console.log(`⚡ [SYNC] Horarios de atención actualizados (Modo: ${BOT_SCHEDULE.mode}, TestMode: ${BOT_SCHEDULE.testMode?.enabled ? 'ACTIVO' : 'INACTIVO'}).`);
             }
 
             console.log(`⚡ [SYNC] Asesores actualizados en tiempo real (${rawList.length} registrados, ${activeSupport.length} activos en soporte).`);

@@ -418,6 +418,7 @@ export function getGuardianProviderOptions(isHeadless = false) {
 
     return {
         name: 'bot',
+        headless: isHeadless, // Declaración explícita en la raíz requerida por WPPConnect
         autoClose: 0,
         deviceSyncTimeout: 0,
         disableWelcome: true,

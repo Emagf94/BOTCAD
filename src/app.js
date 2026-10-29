@@ -15,6 +15,7 @@ import {
 import { activeBridgeChats, isAdmin, getWppClient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
 import { initBroadcastService } from './services/broadcastService.js';
+import { initAdvisorService } from './services/advisorService.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -46,7 +47,9 @@ const main = async () => {
     const adapterFlow = createFlow(allFlows);
 
     // 3. Inicializar WPPConnect con directivas blindadas Anti-Throttling 24/7 (autoClose: 0)
+    // Por defecto Chromium VISIBLE en pantalla salvo que HEADLESS='true'
     const isHeadless = process.env.HEADLESS === 'true';
+    console.log(`🌐 [App] Modo de visualización de Chromium: ${isHeadless ? 'HEADLESS (Invisible)' : 'VISIBLE EN PANTALLA (Ventana Gráfica Abierta)'}`);
     const adapterProvider = createProvider(Provider, getGuardianProviderOptions(isHeadless));
 
     // Capturar eventos de autenticación y vinculación de WPPConnect para la UI del Dashboard
@@ -69,6 +72,9 @@ const main = async () => {
 
     // ═══ BROADCAST SERVICE: Inicializar servicio de difusión masiva ═══
     initBroadcastService(adapterProvider);
+
+    // ═══ ADVISOR SERVICE: Inicializar servicio de pruebas de asesores y alertas ═══
+    initAdvisorService(adapterProvider);
 
     // 4. Base de datos de sesión en memoria
     const adapterDB = new Database();

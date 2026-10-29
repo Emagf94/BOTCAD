@@ -1,8 +1,9 @@
 import { addKeyword, EVENTS } from '@builderbot/bot';
-import { BOT_SETTINGS } from '../botConfig.js';
+import { BOT_SETTINGS, BOT_SCHEDULE, getOutOfHoursMessage } from '../botConfig.js';
 import { getUser, getAllUsers } from '../firebase.js';
 import {
     isWorkingHour,
+    isTestPhone,
     isAdmin,
     pendingSupportQueue,
     pendingSupportDetails,
@@ -510,7 +511,7 @@ export const clientBridgeCapture = async (ctx, { fallBack, gotoFlow, provider })
 
     const adminPhone = findActiveBridge(ctx.from);
     if (!adminPhone) {
-        if (!isWorkingHour()) {
+        if (!isWorkingHour({ fromPhone: ctx.from })) {
             const txt = (ctx.body || '').trim().toLowerCase();
             if (txt === '0' || txt === 'salir') return gotoFlow(flowCancelar);
             return fallBack();
@@ -558,9 +559,10 @@ export const flowAdminInitiatedClientBridge = addKeyword(['iniciarchatadmin123xy
 
 export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
     .addAction(async (ctx, { flowDynamic, gotoFlow }) => {
-        if (!isWorkingHour()) {
+        if (!isWorkingHour({ fromPhone: ctx.from })) {
             await new Promise(r => setTimeout(r, 1200));
-            await flowDynamic('🌙 *Fuera de horario*\n\nActualmente nuestros asesores no están disponibles.\nNuestro horario de atención es:\nLunes a viernes de 8:30am a 12:30pm y de 2:00pm a 6:00pm.\n\nEscribe *0* para volver al menú principal.');
+            const outMsg = getOutOfHoursMessage();
+            await flowDynamic(outMsg);
             return;
         }
 
@@ -568,7 +570,7 @@ export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
         await flowDynamic('👨‍💻 *Contacto con un Asesor*\n\nPor favor, escribe brevemente el *motivo o asunto* de tu consulta para que podamos asignarte al asesor indicado y darte una respuesta más rápida:\n\n_(O escribe *0* si deseas cancelar y volver al menú principal)_');
     })
     .addAction({ capture: true, idle: BOT_SETTINGS.advisorIdleTimeoutMs || 1800000 }, async (ctx, { provider, state, flowDynamic, gotoFlow, fallBack }) => {
-        if (!isWorkingHour()) {
+        if (!isWorkingHour({ fromPhone: ctx.from })) {
             return;
         }
 
@@ -608,8 +610,21 @@ export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
         const pendingCount = position > 1 ? ` (+${position - 1} en espera)` : '';
 
         try {
-            const supportPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
-            const msgAdmin = `🚨 *Solicitud de Soporte*\n\n` +
+            let supportPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
+            const isTest = isTestPhone(ctx.from);
+            if (isTest && BOT_SCHEDULE?.testMode?.notifyOnlyTestAdvisors) {
+                const testJids = (BOT_SCHEDULE.testMode.testPhones || []).map(p => {
+                    let clean = String(p).replace(/\D/g, '');
+                    if (clean.length === 10) clean = '57' + clean;
+                    return `${clean}@c.us`;
+                });
+                if (testJids.length > 0) {
+                    supportPhones = testJids;
+                }
+            }
+
+            const prefix = isTest ? '🧪 *[PRUEBA / CLIENTE TEST]*\n' : '';
+            const msgAdmin = `${prefix}🚨 *Solicitud de Soporte*\n\n` +
                 `👤 *Cliente:* ${finalName}\n` +
                 `📱 *Teléfono:* ${finalPhone}\n` +
                 `📝 *Asunto:* ${asunto}\n\n` +

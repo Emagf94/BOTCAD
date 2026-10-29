@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { BOT_SETTINGS, BOT_MEDIA, BOT_ADVISORS, getAdvisorName } from '../botConfig.js';
+import { BOT_SETTINGS, BOT_MEDIA, BOT_ADVISORS, BOT_SCHEDULE, DEFAULT_SCHEDULE, getAdvisorName } from '../botConfig.js';
 import { getUser, saveUser } from '../firebase.js';
 import {
     getWppClient,
@@ -625,24 +625,171 @@ export const getCustomerDisplayInfo = async (fromOrId) => {
 export { getAdvisorName };
 
 /**
- * Valida si la hora actual está dentro del horario laboral de atención de asesores.
- * Horario:
- * - Lunes a Viernes: 8:30am a 12:30pm y 2:00pm a 6:00pm
- * - Sábados y Domingos: Cerrado
- * @returns {boolean} true si está en horario hábil
+ * Evalúa detalladamente la disponibilidad de atención de asesores según el horario configurado,
+ * el modo manual activo y el modo de prueba.
+ * 
+ * @param {object} [options]
+ * @param {string|Date} [options.customDate] Fecha u hora personalizada para simulación
+ * @param {string} [options.fromPhone] Teléfono del remitente (para evaluar bypass de modo de prueba)
+ * @param {boolean} [options.ignoreTestMode] Si es true, ignora el modo de prueba y evalúa el horario estricto
+ * @returns {{
+ *   isAvailable: boolean,
+ *   reason: 'WITHIN_SLOT'|'OUTSIDE_SLOTS'|'DAY_DISABLED'|'ALWAYS_OPEN'|'ALWAYS_CLOSED'|'TEST_MODE_BYPASS',
+ *   status: 'available'|'closed',
+ *   currentSlot: object|null,
+ *   dayName: string,
+ *   timezone: string,
+ *   evaluatedTime: string,
+ *   mode: string
+ * }}
  */
-export const isWorkingHour = () => {
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
-    const day = now.getDay();
-    const timeInMinutes = now.getHours() * 60 + now.getMinutes();
+export const checkScheduleAvailability = (options = {}) => {
+    const {
+        customDate = null,
+        fromPhone = null,
+        ignoreTestMode = false
+    } = typeof options === 'object' && options !== null ? options : {};
 
-    if (day >= 1 && day <= 5) {
-        // Lunes a Viernes: 8:30am a 12:30pm (510-750) y 2:00pm a 6:00pm (840-1080)
-        if ((timeInMinutes >= 510 && timeInMinutes < 750) || (timeInMinutes >= 840 && timeInMinutes < 1080)) {
-            return true;
+    const schedule = BOT_SCHEDULE || DEFAULT_SCHEDULE;
+    const tz = schedule.timezone || 'America/Bogota';
+
+    // 1. Evaluar si aplica el modo de prueba para este teléfono
+    if (!ignoreTestMode && schedule.testMode?.enabled) {
+        if (fromPhone) {
+            const cleanPhone = String(fromPhone).split('@')[0].replace(/\D/g, '');
+            const testPhones = Array.isArray(schedule.testMode.testPhones) ? schedule.testMode.testPhones : [];
+            const isTest = testPhones.some(tp => {
+                const cleanTp = String(tp).replace(/\D/g, '');
+                return cleanTp && (cleanPhone === cleanTp || cleanPhone.endsWith(cleanTp) || cleanTp.endsWith(cleanPhone));
+            });
+
+            if (isTest && schedule.testMode.bypassSchedule !== false) {
+                return {
+                    isAvailable: true,
+                    reason: 'TEST_MODE_BYPASS',
+                    status: 'available',
+                    currentSlot: null,
+                    dayName: 'Modo de Prueba (Bypass Activo)',
+                    timezone: tz,
+                    evaluatedTime: new Date().toLocaleTimeString('es-CO', { timeZone: tz }),
+                    mode: 'test_bypass'
+                };
+            }
         }
     }
-    return false;
+
+    // 2. Modos Forzados Manuales
+    if (schedule.mode === 'always_open') {
+        return {
+            isAvailable: true,
+            reason: 'ALWAYS_OPEN',
+            status: 'available',
+            currentSlot: { start: '00:00', end: '23:59' },
+            dayName: 'Siempre Abierto (24/7)',
+            timezone: tz,
+            evaluatedTime: new Date().toLocaleTimeString('es-CO', { timeZone: tz }),
+            mode: 'always_open'
+        };
+    }
+
+    if (schedule.mode === 'always_closed') {
+        return {
+            isAvailable: false,
+            reason: 'ALWAYS_CLOSED',
+            status: 'closed',
+            currentSlot: null,
+            dayName: 'Cerrado Temporalmente',
+            timezone: tz,
+            evaluatedTime: new Date().toLocaleTimeString('es-CO', { timeZone: tz }),
+            mode: 'always_closed'
+        };
+    }
+
+    // 3. Evaluación Automática de Horario Semanal
+    const dateToCheck = customDate ? new Date(customDate) : new Date();
+    const nowInTz = new Date(dateToCheck.toLocaleString("en-US", { timeZone: tz }));
+    const day = nowInTz.getDay(); // 0: Domingo, 1: Lunes, ..., 6: Sábado
+    const currentMinutes = nowInTz.getHours() * 60 + nowInTz.getMinutes();
+    const evaluatedTime = `${String(nowInTz.getHours()).padStart(2, '0')}:${String(nowInTz.getMinutes()).padStart(2, '0')}`;
+
+    const daysConfig = schedule.days || DEFAULT_SCHEDULE.days;
+    const dayConfig = daysConfig[day] || { name: 'Día desconocido', enabled: false, slots: [] };
+
+    if (!dayConfig.enabled) {
+        return {
+            isAvailable: false,
+            reason: 'DAY_DISABLED',
+            status: 'closed',
+            currentSlot: null,
+            dayName: dayConfig.name,
+            timezone: tz,
+            evaluatedTime,
+            mode: 'auto'
+        };
+    }
+
+    const slots = Array.isArray(dayConfig.slots) ? dayConfig.slots : [];
+    for (const slot of slots) {
+        if (!slot.start || !slot.end) continue;
+        const [startH, startM] = slot.start.split(':').map(Number);
+        const [endH, endM] = slot.end.split(':').map(Number);
+        const startMin = startH * 60 + (startM || 0);
+        const endMin = endH * 60 + (endM || 0);
+
+        if (currentMinutes >= startMin && currentMinutes < endMin) {
+            return {
+                isAvailable: true,
+                reason: 'WITHIN_SLOT',
+                status: 'available',
+                currentSlot: slot,
+                dayName: dayConfig.name,
+                timezone: tz,
+                evaluatedTime,
+                mode: 'auto'
+            };
+        }
+    }
+
+    return {
+        isAvailable: false,
+        reason: 'OUTSIDE_SLOTS',
+        status: 'closed',
+        currentSlot: null,
+        dayName: dayConfig.name,
+        timezone: tz,
+        evaluatedTime,
+        mode: 'auto'
+    };
+};
+
+/**
+ * Valida si la hora actual está dentro del horario laboral de atención de asesores.
+ * Mantiene 100% retrocompatibilidad retornando boolean.
+ * Acepta opciones de contexto (ej. { fromPhone: ctx.from }) para verificar modo de prueba.
+ * 
+ * @param {object|undefined} [options]
+ * @returns {boolean} true si el bot debe transferir al cliente a un asesor humano
+ */
+export const isWorkingHour = (options = {}) => {
+    const result = checkScheduleAvailability(options);
+    return result.isAvailable;
+};
+
+/**
+ * Comprueba si un número de teléfono está registrado en la lista de números de prueba de asesores.
+ * @param {string} fromPhone 
+ * @returns {boolean}
+ */
+export const isTestPhone = (fromPhone) => {
+    if (!fromPhone) return false;
+    const schedule = BOT_SCHEDULE || DEFAULT_SCHEDULE;
+    if (!schedule.testMode?.enabled) return false;
+    const cleanPhone = String(fromPhone).split('@')[0].replace(/\D/g, '');
+    const testPhones = Array.isArray(schedule.testMode.testPhones) ? schedule.testMode.testPhones : [];
+    return testPhones.some(tp => {
+        const cleanTp = String(tp).replace(/\D/g, '');
+        return cleanTp && (cleanPhone === cleanTp || cleanPhone.endsWith(cleanTp) || cleanTp.endsWith(cleanPhone));
+    });
 };
 
 // Re-exportar utilidades de Firebase para acceso centralizado

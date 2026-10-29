@@ -62,19 +62,24 @@ Tienes 4 alternativas para mantener tu bot ejecutándose de manera continua. Eli
 
 ---
 
-### 🟣 Opción A: Servicio de Windows (Recomendada / 100% Invisible y Autónoma)
+### 🟢 Opción A: Modo Visible en Pantalla (Consola + Chromium Abiertos 24/7 - RECOMENDADA)
 
-Esta es la opción **más profesional para Windows**. Instala el bot como un servicio nativo del sistema. El bot se iniciará automáticamente de fondo **incluso si el PC se reinicia y nadie inicia sesión**, y será completamente invisible (sin consolas abiertas).
+Esta es la opción recomendada para ver en todo momento la **Consola de Servicio** con los logs y la **ventana gráfica de Chromium** con WhatsApp Web en tu escritorio.
 
-1. Ve a la carpeta `base-js-baileys-memory`.
-2. Haz **doble clic** en el archivo:
+1. Haz **doble clic** en el archivo:
    ```
-   1_Instalar_Servicio_Bot.bat
+   ACTIVAR_CONSOLA_Y_CHROMIUM_EN_PANTALLA.bat
    ```
-3. Otorga los **permisos de Administrador** cuando Windows te lo solicite.
-4. Espera a que termine el proceso. ¡Y listo! El bot ya se está ejecutando de fondo y arrancará siempre con Windows, pase lo que pase.
-   - *Nota: Si deseas desinstalarlo en el futuro, simplemente ejecuta `2_Desinstalar_Servicio_Bot.bat`.*
-   - *Logs: Como no hay consola visible, cualquier error o mensaje se guardará en la carpeta `daemon` dentro de tu proyecto.*
+2. Otorga los permisos de Administrador.
+3. El instalador configurará el inicio automático en tu pantalla (`shell:startup`), asegurará que Chromium abra su ventana (`HEADLESS=false`) y lanzará el bot con su Watchdog de reinicio continuo.
+
+---
+
+### 🟣 Opción B: Servicio de Windows (100% Invisible en Segundo Plano)
+
+Si en el futuro deseas que el bot corra totalmente oculto sin ninguna ventana en pantalla:
+1. Haz doble clic en `1_Instalar_Servicio_Bot.bat`.
+2. Para desinstalarlo y volver al modo visible en pantalla, ejecuta `ACTIVAR_CONSOLA_Y_CHROMIUM_EN_PANTALLA.bat`.
 
 ---
 

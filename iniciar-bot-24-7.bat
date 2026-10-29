@@ -1,10 +1,14 @@
 @echo off
 cd /d "%~dp0"
-title CAD Impresiones - Bot de WhatsApp (Ejecucion 24/7 BLINDADO)
+title CAD Impresiones - Bot de WhatsApp [CONSOLA DE SERVICIO ACTIVA EN PANTALLA]
 color 0A
 
+:: Forzar Chromium visible en pantalla
+set HEADLESS=false
+
 echo ========================================================
-echo   CAD IMPRESIONES - INICIANDO BOT 24/7 [BLINDADO]
+echo   CAD IMPRESIONES - INICIANDO BOT 24/7 [EN PANTALLA]
+echo   Consola de Servicio y Chromium Visibles en Escritorio
 echo ========================================================
 echo.
 echo   Este script incluye proteccion contra:
