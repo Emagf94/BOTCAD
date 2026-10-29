@@ -57,8 +57,23 @@ export const extractCandidateDigits = (fromOrCtx) => {
 
     const cleanedSet = new Set();
     for (const cand of candidates) {
-        const digits = String(cand).split('@')[0].replace(/\D/g, '');
-        if (digits) cleanedSet.add(digits);
+        if (!cand) continue;
+        const strCand = String(cand).trim();
+        // 1. Quitar sufijo de dominio (@c.us, @s.whatsapp.net, @lid)
+        const beforeAt = strCand.split('@')[0];
+        // 2. Quitar sufijo de dispositivo multi-dispositivo (:0, :1, :24, etc.)
+        const pureIdentifier = beforeAt.split(':')[0];
+        // 3. Extraer solo dígitos
+        const digits = pureIdentifier.replace(/\D/g, '');
+        if (digits) {
+            cleanedSet.add(digits);
+            // Si es número celular de Colombia, agregar variantes corta (10 dígitos) y larga (57 + 10 dígitos)
+            if (digits.length === 10) {
+                cleanedSet.add(`57${digits}`);
+            } else if (digits.length === 12 && digits.startsWith('57')) {
+                cleanedSet.add(digits.substring(2));
+            }
+        }
     }
 
     return Array.from(cleanedSet);
@@ -223,15 +238,44 @@ export const resolveAdvisorIdentity = async (fromOrCtx, wppClient = null) => {
         }
     }
 
-    // 2. Si no hubo coincidencia directa y alguno de los candidatos parece ser un LID (14-16 dígitos),
-    // intentar resolver el teléfono real del contacto mediante el cliente de WPPConnect
-    if (wppClient && typeof wppClient.getContact === 'function') {
-        const potentialLids = candidateDigits.filter(c => c.length >= 14);
+    // 2. Si no hubo coincidencia directa y alguno de los candidatos parece ser un LID (12-20 dígitos),
+    // intentar resolver el teléfono real del contacto mediante el cliente de WPPConnect / WA-JS
+    if (wppClient) {
+        const potentialLids = candidateDigits.filter(c => c.length >= 12 && c.length <= 20);
         for (const lid of potentialLids) {
             try {
                 const contactId = lid.includes('@') ? lid : `${lid}@lid`;
-                const contact = await wppClient.getContact(contactId);
-                const realPhoneCandidate = contact?.number || contact?.phoneNumber || contact?.id?.user;
+                let realPhoneCandidate = null;
+
+                // 2.1 Intentar vía WA-JS lidPnCache directamente en la página de Chromium
+                if (wppClient.page && typeof wppClient.page.evaluate === 'function') {
+                    try {
+                        realPhoneCandidate = await wppClient.page.evaluate((lidStr) => {
+                            try {
+                                const wid = window.WPP?.whatsapp?.WidFactory?.createWid(lidStr);
+                                if (wid) {
+                                    const phoneWid = window.WPP?.whatsapp?.lidPnCache?.getPhoneNumber(wid);
+                                    if (phoneWid?.user) return phoneWid.user;
+                                }
+                                const contact = window.WPP?.contact?.get(lidStr);
+                                if (contact?.phoneNumber) return contact.phoneNumber;
+                                if (contact?.id?.user && !contact.id.user.includes('@lid')) return contact.id.user;
+                            } catch (e) {}
+                            return null;
+                        }, contactId).catch(() => null);
+                    } catch (_) {}
+                }
+
+                // 2.2 Fallback a getContact nativo
+                if (!realPhoneCandidate && typeof wppClient.getContact === 'function') {
+                    const contact = await wppClient.getContact(contactId).catch(() => null);
+                    realPhoneCandidate = contact?.number || contact?.phoneNumber || contact?.id?.user;
+                }
+
+                // 2.3 Mapeo directo conocido si es el LID histórico de Yeni
+                if (!realPhoneCandidate && lid === '13770403381354') {
+                    realPhoneCandidate = '573136303477';
+                }
 
                 if (realPhoneCandidate) {
                     const realVariants = normalizePhoneVariants(realPhoneCandidate);
@@ -308,31 +352,36 @@ export const resolveAdvisorIdentity = async (fromOrCtx, wppClient = null) => {
             );
 
             if (isMatch) {
+                const isYeni = (cleanEsc === '13770403381354' || cand === '13770403381354' || cleanEsc === '573136303477' || cand === '573136303477');
+                const targetPhone = isYeni ? '573136303477' : cleanEsc;
+                const targetName = isYeni ? 'YENI' : 'Administrador (Escape)';
+                const targetRole = isYeni ? 'advisor' : 'admin';
+
                 return {
                     isAuthorized: true,
                     advisor: {
-                        id: `fallback_${cleanEsc}`,
-                        name: 'Administrador (Escape)',
-                        phone: cleanEsc,
-                        role: 'admin',
+                        id: isYeni ? 'adv_1793241145966' : `fallback_${cleanEsc}`,
+                        name: targetName,
+                        phone: targetPhone,
+                        role: targetRole,
                         active: true,
                         canExecuteCommands: true,
                         canManageSupport: true,
-                        canBroadcast: true,
+                        canBroadcast: targetRole === 'admin',
                         receiveSupport: true,
-                        receiveOrders: true
+                        receiveOrders: targetRole === 'admin'
                     },
-                    role: 'admin',
+                    role: targetRole,
                     permissions: {
                         canExecuteCommands: true,
                         canManageSupport: true,
-                        canBroadcast: true,
+                        canBroadcast: targetRole === 'admin',
                         receiveSupport: true,
-                        receiveOrders: true,
+                        receiveOrders: targetRole === 'admin',
                         active: true
                     },
                     matchedIdentifier: cand,
-                    isLid: cand.length >= 14
+                    isLid: cand.length >= 12
                 };
             }
         }

@@ -145,3 +145,121 @@ export const initAdvisorService = (provider) => {
         console.warn(`⚠️ [AdvisorService] Error configurando listener Firestore advisor_test: ${e.message}`);
     }
 };
+
+/**
+ * Envía la notificación oficial de solicitud de soporte a todos los asesores autorizados
+ * cuando un cliente pide asesor humano en el bot.
+ * 
+ * @param {object} provider Instancia del proveedor BuilderBot / WPPConnect
+ * @param {object} params
+ * @param {string} params.clientName Nombre del cliente
+ * @param {string} params.clientPhone Teléfono del cliente
+ * @param {string} params.clientJid JID del cliente en WhatsApp
+ * @param {string} params.subject Motivo o asunto de la consulta
+ * @param {number} params.position Posición en la cola de espera
+ * @param {boolean} [params.isTest] Si es un cliente de prueba
+ * @returns {Promise<{ success: boolean, recipients: string[], failed: string[] }>}
+ */
+export const notifySupportAdvisors = async (provider, {
+    clientName = 'Cliente',
+    clientPhone = '',
+    clientJid = '',
+    subject = 'Consulta general',
+    position = 1,
+    isTest = false
+} = {}) => {
+    const prov = provider || providerInstance;
+    if (!prov) {
+        console.error('❌ [SupportAlert] Provider no disponible para despachar alertas de soporte.');
+        return { success: false, recipients: [], failed: [] };
+    }
+
+    try {
+        // 1. Obtener lista de asesores activos que reciben soporte
+        const advisors = BOT_ADVISORS.filter(a => a.active !== false && a.receiveSupport !== false && a.phone);
+        
+        let recipientPhones = advisors.map(a => {
+            let clean = String(a.phone).replace(/\D/g, '');
+            if (clean.length === 10) clean = '57' + clean;
+            return {
+                name: a.name || 'Asesor',
+                phone: clean,
+                jid: `${clean}@c.us`
+            };
+        });
+
+        // 2. Si hay modo de prueba con testMode.notifyOnlyTestAdvisors activo
+        if (isTest && BOT_SCHEDULE?.testMode?.notifyOnlyTestAdvisors) {
+            const testPhones = (BOT_SCHEDULE.testMode.testPhones || []).map(p => {
+                let clean = String(p).replace(/\D/g, '');
+                if (clean.length === 10) clean = '57' + clean;
+                return clean;
+            });
+            recipientPhones = recipientPhones.filter(r => testPhones.includes(r.phone));
+        }
+
+        // 3. Fallback seguro si la lista quedó vacía
+        if (recipientPhones.length === 0) {
+            const rawAdmins = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573136303477@c.us');
+            recipientPhones = rawAdmins.map(jid => {
+                const clean = jid.split('@')[0].replace(/\D/g, '');
+                return { name: 'Asesor', phone: clean, jid: `${clean}@c.us` };
+            });
+        }
+
+        const pendingCount = position > 1 ? ` (+${position - 1} en espera)` : '';
+        const prefix = isTest ? '🧪 *[PRUEBA / CLIENTE TEST]*\n' : '';
+        const alertMessage = `${prefix}🚨 *Solicitud de Soporte*\n\n` +
+            `👤 *Cliente:* ${clientName}\n` +
+            `📱 *Teléfono:* +${clientPhone}\n` +
+            `📝 *Asunto:* ${subject}\n\n` +
+            `Para atender este chat, envía:\n*!atender*${pendingCount}`;
+
+        console.log(`📢 [SupportAlert] Despachando alerta de cliente (+${clientPhone}) a ${recipientPhones.length} asesor(es)...`);
+
+        const successfulRecipients = [];
+        const failedRecipients = [];
+
+        // Excluir el número de host del propio bot si está presente
+        const botHostDigits = String(BOT_SETTINGS?.botPhone || '').replace(/\D/g, '');
+
+        for (const recipient of recipientPhones) {
+            if (botHostDigits && recipient.phone === botHostDigits) {
+                continue; // No enviar al propio bot
+            }
+
+            try {
+                // Envío principal vía provider
+                await prov.sendMessage(recipient.jid, alertMessage, {});
+                successfulRecipients.push(recipient.phone);
+                console.log(`  ✅ [SupportAlert] Alerta enviada a ${recipient.name} (+${recipient.phone})`);
+            } catch (errProv) {
+                console.warn(`  ⚠️ [SupportAlert] Falló provider.sendMessage a ${recipient.name} (+${recipient.phone}): ${errProv.message}. Intentando fallback directo...`);
+                // Fallback directo a WPPConnect vendor si está disponible
+                try {
+                    const client = prov.vendor || (typeof prov.getInstance === 'function' ? await prov.getInstance() : null);
+                    if (client && typeof client.sendText === 'function') {
+                        await client.sendText(recipient.jid, alertMessage);
+                        successfulRecipients.push(recipient.phone);
+                        console.log(`  ✅ [SupportAlert] Fallback exitoso a ${recipient.name} (+${recipient.phone})`);
+                    } else {
+                        failedRecipients.push(recipient.phone);
+                    }
+                } catch (errDirect) {
+                    failedRecipients.push(recipient.phone);
+                    console.error(`  ❌ [SupportAlert] No se pudo entregar alerta a ${recipient.name} (+${recipient.phone}):`, errDirect.message);
+                }
+            }
+        }
+
+        return {
+            success: successfulRecipients.length > 0,
+            recipients: successfulRecipients,
+            failed: failedRecipients
+        };
+    } catch (e) {
+        console.error('❌ [SupportAlert] Error general despachando alertas:', e);
+        return { success: false, recipients: [], failed: [] };
+    }
+};
+

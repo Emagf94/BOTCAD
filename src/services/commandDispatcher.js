@@ -33,11 +33,11 @@ export const notifyAdvisorsClientAttended = async (provider, { advisorPhone, tar
         const phone = clientInfo.phone || (targetId ? String(targetId).split('@')[0] : '');
 
         // Obtener nombre del asesor que atendió
-        const cleanAdv = String(advisorPhone).split('@')[0].replace(/\D/g, '');
+        const cleanAdv = String(advisorPhone).split('@')[0].split(':')[0].replace(/\D/g, '');
         const matchedAdv = BOT_ADVISORS.find(a => {
             const p = String(a.phone || '').replace(/\D/g, '');
             const l = String(a.lid || '').replace(/\D/g, '');
-            return (p && (cleanAdv === p || cleanAdv.endsWith(p))) || (l && cleanAdv === l);
+            return (p && (cleanAdv === p || cleanAdv.endsWith(p) || p.endsWith(cleanAdv))) || (l && cleanAdv === l);
         });
         const advisorName = matchedAdv?.name || 'Asesor';
 
@@ -47,12 +47,34 @@ export const notifyAdvisorsClientAttended = async (provider, { advisorPhone, tar
 
         const broadcastMsg = `🔔 *Atención de Soporte Iniciada*\n\n` +
             `👤 *Cliente:* ${name}\n` +
-            `📱 *Teléfono:* ${phone}\n` +
+            `📱 *Teléfono:* +${phone}\n` +
             `👨‍💻 *Atendido por:* ${advisorName}\n\n` +
             `${queueInfo}`;
 
-        const adminPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
-        for (const phoneJid of adminPhones) {
+        let hostPhone = '';
+        try {
+            const client = await getWppClient(provider);
+            const wid = client?.wid?._serialized || client?.session?.me?.id || '';
+            hostPhone = String(wid).split('@')[0].split(':')[0].replace(/\D/g, '');
+        } catch (e) {}
+
+        // Notificar a los demás asesores que reciben soporte (excepto quien atendió y la línea del bot)
+        const recipientJids = BOT_ADVISORS
+            .filter(a => a.active !== false && a.receiveSupport !== false && a.phone)
+            .map(a => {
+                let clean = String(a.phone).replace(/\D/g, '');
+                if (clean.length === 10) clean = '57' + clean;
+                return clean;
+            })
+            .filter(cleanPhone => {
+                if (!cleanPhone) return false;
+                if (hostPhone && (cleanPhone === hostPhone || cleanPhone.endsWith(hostPhone))) return false;
+                if (matchedAdv?.phone && String(matchedAdv.phone).replace(/\D/g, '') === cleanPhone) return false;
+                return true;
+            })
+            .map(clean => `${clean}@c.us`);
+
+        for (const phoneJid of recipientJids) {
             try {
                 await provider.sendMessage(phoneJid, broadcastMsg, {});
             } catch (err) {
@@ -198,14 +220,46 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     const { advisor, role, permissions, matchedIdentifier } = authInfo;
     const advisorName = advisor?.name || 'Asesor';
 
-    console.log(`⚡ [CommandDispatcher] Comando "${cmd}" recibido de "${advisorName}" (${fromJid} | ID: ${matchedIdentifier}) [Rol: ${role}]`);
+    const cleanFrom = String(fromJid).split('@')[0].split(':')[0].replace(/\D/g, '');
+    const rawAdvPhone = advisor?.phone ? String(advisor.phone).replace(/\D/g, '') : '';
+    const cleanAdvisorPhone = rawAdvPhone.length === 10 ? '57' + rawAdvPhone : rawAdvPhone;
+    const advisorDeliverJid = cleanAdvisorPhone ? `${cleanAdvisorPhone}@c.us` : (fromJid.includes('@lid') ? `${cleanFrom}@c.us` : fromJid);
+
+    /**
+     * Envía una respuesta segura al asesor utilizando su JID @c.us garantizado,
+     * previniendo fallos de entrega cuando el comando se origina desde WhatsApp Web (@lid)
+     */
+    const sendReply = async (text, options = {}) => {
+        try {
+            await provider.sendMessage(advisorDeliverJid, text, options);
+            return;
+        } catch (err) {
+            console.warn(`⚠️ [CommandDispatcher] Falló envío a ${advisorDeliverJid}: ${err.message}. Intentando fallback.`);
+        }
+
+        try {
+            const client = await getWppClient(provider);
+            if (client && typeof client.sendText === 'function') {
+                await client.sendText(advisorDeliverJid, text);
+                return;
+            }
+        } catch (e2) {}
+
+        if (advisorDeliverJid !== fromJid) {
+            try {
+                await provider.sendMessage(fromJid, text, options);
+            } catch (e3) {}
+        }
+    };
+
+    console.log(`⚡ [CommandDispatcher] Comando "${cmd}" recibido de "${advisorName}" (${fromJid} -> ${advisorDeliverJid} | ID: ${matchedIdentifier}) [Rol: ${role}]`);
 
     // 1. Verificar si el usuario tiene permiso general para ejecutar comandos
     if (!permissions.canExecuteCommands) {
         const denyMsg = `🚫 *ACCESO RESTRINGIDO*\n\n` +
             `Hola *${advisorName}*, tu perfil actualmente *no tiene habilitado el permiso para ejecutar comandos* de bot.\n\n` +
             `👉 Solicita al Administrador que active la opción *"Ejecutar Comandos en WhatsApp"* en el panel de control.`;
-        await provider.sendMessage(fromJid, denyMsg, {});
+        await sendReply(denyMsg);
         return { handled: true, command: cmd, success: false, reason: 'COMMANDS_DISABLED' };
     }
 
@@ -214,7 +268,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // =========================================================================
     if (cmd === '!ayuda' || cmd === '!comandos' || cmd === '!menu') {
         const helpMsg = buildHelpMenu(authInfo);
-        await provider.sendMessage(fromJid, helpMsg, {});
+        await sendReply(helpMsg);
         return { handled: true, command: cmd, success: true };
     }
 
@@ -222,22 +276,37 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // COMANDO: !vincular
     // =========================================================================
     if (cmd === '!vincular' || cmd === '!id') {
-        const cleanFrom = String(fromJid).split('@')[0].replace(/\D/g, '');
-        if (cleanFrom.length >= 14 && advisor?.id) {
-            await autoLinkAdvisorLid(advisor.id, cleanFrom);
+        let targetAdvisor = advisor;
+
+        if (argsStr) {
+            const requestedDigits = argsStr.replace(/\D/g, '');
+            if (requestedDigits.length >= 10) {
+                const found = BOT_ADVISORS.find(a => {
+                    const p = String(a.phone || '').replace(/\D/g, '');
+                    return p === requestedDigits || p.endsWith(requestedDigits) || requestedDigits.endsWith(p);
+                });
+                if (found) {
+                    targetAdvisor = found;
+                }
+            }
         }
 
-        const lidStatus = advisor?.lid
-            ? `🟢 *Dispositivo Vinculado:* \`${advisor.lid}\``
-            : `🟡 *ID de este mensaje:* \`${cleanFrom}\` (Vinculado a tu línea +${advisor?.phone})`;
+        if (cleanFrom.length >= 14 && targetAdvisor?.id) {
+            await autoLinkAdvisorLid(targetAdvisor.id, cleanFrom);
+            targetAdvisor.lid = cleanFrom;
+        }
+
+        const lidStatus = targetAdvisor?.lid
+            ? `🟢 *Dispositivo Vinculado:* \`${targetAdvisor.lid}\``
+            : `🟡 *ID de este mensaje:* \`${cleanFrom}\` (Vinculado a tu línea +${targetAdvisor?.phone || cleanAdvisorPhone})`;
 
         const vincMsg = `📱 *ESTADO DE VINCULACIÓN DE DISPOSITIVO*\n\n` +
-            `👤 *Asesor:* ${advisorName}\n` +
-            `📱 *Línea registrada:* +${advisor?.phone || cleanFrom}\n` +
-            `🏷️ *Rol asignado:* ${role === 'admin' ? 'Administrador' : 'Asesor'}\n` +
+            `👤 *Asesor:* ${targetAdvisor?.name || advisorName}\n` +
+            `📱 *Línea registrada:* +${targetAdvisor?.phone || cleanAdvisorPhone || cleanFrom}\n` +
+            `🏷️ *Rol asignado:* ${targetAdvisor?.role === 'admin' ? 'Administrador' : 'Asesor'}\n` +
             `${lidStatus}\n\n` +
             `✅ Tu dispositivo está completamente autorizado para ejecutar comandos en el sistema.`;
-        await provider.sendMessage(fromJid, vincMsg, {});
+        await sendReply(vincMsg);
         return { handled: true, command: cmd, success: true };
     }
 
@@ -245,12 +314,15 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // COMANDO: !fin (Finalizar chat de soporte activo)
     // =========================================================================
     if (cmd === '!fin' || cmd === '!terminar' || cmd === '!salir') {
-        const res = await endActiveSupportChat(provider, fromJid);
+        let res = await endActiveSupportChat(provider, fromJid);
+        if (!res.success && advisorDeliverJid !== fromJid) {
+            res = await endActiveSupportChat(provider, advisorDeliverJid);
+        }
         if (res.success) {
             const rawPhone = res.clientPhone.split('@')[0];
-            await provider.sendMessage(fromJid, `✅ Sesión de soporte con el cliente (+${rawPhone}) finalizada correctamente. Has salido del modo soporte.`, {});
+            await sendReply(`✅ Sesión de soporte con el cliente (+${rawPhone}) finalizada correctamente. Has salido del modo soporte.`);
         } else {
-            await provider.sendMessage(fromJid, 'ℹ️ No tienes ningún chat de soporte activo con un cliente en este momento.', {});
+            await sendReply('ℹ️ No tienes ningún chat de soporte activo con un cliente en este momento.');
         }
         return { handled: true, command: cmd, success: true };
     }
@@ -260,13 +332,13 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // =========================================================================
     if (cmd === '!cola' || cmd === '!estado' || cmd === '!pendientes') {
         if (!permissions.canManageSupport) {
-            await provider.sendMessage(fromJid, '🚫 No tienes permiso para gestionar la cola de soporte de clientes.', {});
+            await sendReply('🚫 No tienes permiso para gestionar la cola de soporte de clientes.');
             return { handled: true, command: cmd, success: false, reason: 'FORBIDDEN_SUPPORT' };
         }
 
         const count = pendingSupportQueue.length;
         if (count === 0) {
-            await provider.sendMessage(fromJid, '📋 *Estado de Cola:* No hay clientes esperando soporte en este momento. La cola está vacía ✅', {});
+            await sendReply('📋 *Estado de Cola:* No hay clientes esperando soporte en este momento. La cola está vacía ✅');
         } else {
             let listMsg = `📋 *CLIENTES EN ESPERA DE SOPORTE (${count}):*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             for (let i = 0; i < pendingSupportQueue.length; i++) {
@@ -285,14 +357,14 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
                 listMsg += `${i + 1}. 👤 *${displayName}* (📱 +${displayPhone})\n${asuntoStr}\n`;
             }
             listMsg += `👉 Para atender al primer cliente de la fila, escribe: *!atender*`;
-            await provider.sendMessage(fromJid, listMsg, {});
+            await sendReply(listMsg);
         }
         return { handled: true, command: cmd, success: true };
     }
 
     if (cmd === '!atender' || cmd === '!chatear') {
         if (!permissions.canManageSupport) {
-            await provider.sendMessage(fromJid, '🚫 Tu rol no tiene permisos para atender chats de clientes. Contacta al Administrador.', {});
+            await sendReply('🚫 Tu rol no tiene permisos para atender chats de clientes. Contacta al Administrador.');
             return { handled: true, command: cmd, success: false, reason: 'FORBIDDEN_SUPPORT' };
         }
 
@@ -301,7 +373,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
 
         if (cmd === '!atender') {
             if (pendingSupportQueue.length === 0) {
-                await provider.sendMessage(fromJid, '⚠️ No hay clientes esperando soporte en este momento. La cola está vacía.', {});
+                await sendReply('⚠️ No hay clientes esperando soporte en este momento. La cola está vacía.');
                 return { handled: true, command: cmd, success: false, reason: 'EMPTY_QUEUE' };
             }
             targetId = pendingSupportQueue.shift();
@@ -309,7 +381,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
             // !chatear <telefono>
             let targetPhone = argsStr.replace(/\D/g, '');
             if (!targetPhone) {
-                await provider.sendMessage(fromJid, '⚠️ Debes indicar el número del cliente al que deseas conectar:\n\n_Ejemplo:_ `!chatear 3001234567` o `!chatear 573001234567`', {});
+                await sendReply('⚠️ Debes indicar el número del cliente al que deseas conectar:\n\n_Ejemplo:_ `!chatear 3001234567` o `!chatear 573001234567`');
                 return { handled: true, command: cmd, success: false, reason: 'MISSING_PARAM' };
             }
 
@@ -327,19 +399,35 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
         }
 
         // Si el asesor ya tenía otro chat activo, cerrarlo previamente
-        const previousChat = findActiveBridge(fromJid);
+        const previousChat = findActiveBridge(fromJid) || (cleanAdvisorPhone && findActiveBridge(`${cleanAdvisorPhone}@c.us`));
         if (previousChat && previousChat !== targetId) {
             await endActiveSupportChat(provider, fromJid);
+            if (advisorDeliverJid && advisorDeliverJid !== fromJid) {
+                await endActiveSupportChat(provider, advisorDeliverJid);
+            }
         }
 
-        // Enlazar bidireccionalmente en memoria
-        activeBridgeChats.set(fromJid, targetId);
-        activeBridgeChats.set(targetId, fromJid);
+        // 1. Vincular el cliente hacia el asesor (usando advisorDeliverJid para garantizar entrega)
+        activeBridgeChats.set(targetId, advisorDeliverJid);
+        const cleanClient = String(targetId).split('@')[0].split(':')[0].replace(/\D/g, '');
+        if (cleanClient) {
+            activeBridgeChats.set(cleanClient, advisorDeliverJid);
+            activeBridgeChats.set(`${cleanClient}@c.us`, advisorDeliverJid);
+        }
 
-        const cleanAdmin = String(fromJid).split('@')[0].replace(/\D/g, '');
-        const cleanClient = String(targetId).split('@')[0].replace(/\D/g, '');
-        if (cleanAdmin) activeBridgeChats.set(cleanAdmin, targetId);
-        if (cleanClient) activeBridgeChats.set(cleanClient, fromJid);
+        // 2. Vincular todas las variantes del asesor hacia el cliente (LID, teléfono móvil, clean digits, fromJid)
+        activeBridgeChats.set(fromJid, targetId);
+        activeBridgeChats.set(advisorDeliverJid, targetId);
+        if (cleanFrom) activeBridgeChats.set(cleanFrom, targetId);
+        if (cleanAdvisorPhone) {
+            activeBridgeChats.set(cleanAdvisorPhone, targetId);
+            activeBridgeChats.set(`${cleanAdvisorPhone}@c.us`, targetId);
+        }
+        if (advisor?.lid) {
+            const cleanLid = String(advisor.lid).split(':')[0].replace(/\D/g, '');
+            activeBridgeChats.set(cleanLid, targetId);
+            activeBridgeChats.set(`${cleanLid}@lid`, targetId);
+        }
 
         // Remover de colas
         const rawTargetPhone = targetId.split('@')[0];
@@ -358,8 +446,9 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
         try {
             await provider.sendMessage(targetId, `👨‍💻 *${advisorName} se ha unido al chat.* Puedes escribirle ahora.`, {});
         } catch (err) {
-            await provider.sendMessage(fromJid, `❌ Error: No se pudo conectar con el cliente +${displayPhone}. Es posible que el número sea inválido o no tenga WhatsApp activo.`, {});
+            await sendReply(`❌ Error: No se pudo conectar con el cliente +${displayPhone}. Es posible que el número sea inválido o no tenga WhatsApp activo.`);
             activeBridgeChats.delete(fromJid);
+            activeBridgeChats.delete(advisorDeliverJid);
             activeBridgeChats.delete(targetId);
             return { handled: true, command: cmd, success: false, reason: 'CLIENT_UNREACHABLE' };
         }
@@ -373,17 +462,15 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
             });
         } catch (e) {}
 
-        await provider.sendMessage(
-            fromJid,
+        await sendReply(
             `✅ *¡Conectado exitosamente con ${clientName} (+${displayPhone})!*\n\n` +
             `Todo lo que escribas a partir de ahora se enviará directamente al cliente.\n` +
-            `👉 Para terminar el soporte y regresar, escribe *!fin*.`,
-            {}
+            `👉 Para terminar el soporte y regresar, escribe *!fin*.`
         );
 
         // Notificar al resto del equipo
         await notifyAdvisorsClientAttended(provider, {
-            advisorPhone: fromJid,
+            advisorPhone: cleanAdvisorPhone || fromJid,
             targetId,
             clientName,
             remainingCount: pendingSupportQueue.length
@@ -397,7 +484,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // =========================================================================
     if (cmd === '!difusion' || cmd === '!masivo') {
         if (!permissions.canBroadcast) {
-            await provider.sendMessage(fromJid, '🚫 *Acceso Denegado:* No tienes permiso para enviar difusiones masivas. Esta función requiere rol de *Administrador* o privilegio de difusión activo.', {});
+            await sendReply('🚫 *Acceso Denegado:* No tienes permiso para enviar difusiones masivas. Esta función requiere rol de *Administrador* o privilegio de difusión activo.');
             return { handled: true, command: cmd, success: false, reason: 'FORBIDDEN_BROADCAST' };
         }
 
@@ -422,12 +509,12 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
                 `🚦 *Comandos de control:*\n` +
                 `• *!confirmar* : Iniciar envío tras ver la muestra\n` +
                 `• *!cancelar* : Descartar o detener difusión en curso`;
-            await provider.sendMessage(fromJid, helpBroadcast, {});
+            await sendReply(helpBroadcast);
             return { handled: true, command: cmd, success: true };
         }
 
         if (isBroadcasting()) {
-            await provider.sendMessage(fromJid, '⚠️ Ya hay una difusión masiva en progreso. Si deseas detenerla, escribe *!cancelar*.', {});
+            await sendReply('⚠️ Ya hay una difusión masiva en progreso. Si deseas detenerla, escribe *!cancelar*.');
             return { handled: true, command: cmd, success: false, reason: 'ALREADY_BROADCASTING' };
         }
 
@@ -462,7 +549,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
         }
 
         if (validRecipients.length === 0) {
-            await provider.sendMessage(fromJid, '⚠️ No se encontraron clientes con número telefónico válido en la base de datos de usuarios.', {});
+            await sendReply('⚠️ No se encontraron clientes con número telefónico válido en la base de datos de usuarios.');
             return { handled: true, command: cmd, success: false, reason: 'NO_RECIPIENTS' };
         }
 
@@ -506,30 +593,28 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
             `👉 Escribe *!confirmar* para iniciar el envío masivo.\n` +
             `👉 Escribe *!cancelar* para descartar la campaña.`;
 
-        await provider.sendMessage(fromJid, previewMsg, {});
+        await sendReply(previewMsg);
         return { handled: true, command: cmd, success: true };
     }
 
     if (cmd === '!confirmar') {
         if (!permissions.canBroadcast) {
-            await provider.sendMessage(fromJid, '🚫 No tienes permiso para autorizar difusiones masivas.', {});
+            await sendReply('🚫 No tienes permiso para autorizar difusiones masivas.');
             return { handled: true, command: cmd, success: false, reason: 'FORBIDDEN_BROADCAST' };
         }
 
         if (!pendingAdminCampaign.has(fromJid)) {
-            await provider.sendMessage(fromJid, '⚠️ No tienes ninguna difusión pendiente por confirmar. Escribe *!difusion* para crear una.', {});
+            await sendReply('⚠️ No tienes ninguna difusión pendiente por confirmar. Escribe *!difusion* para crear una.');
             return { handled: true, command: cmd, success: false, reason: 'NO_PENDING_CAMPAIGN' };
         }
 
         const campaign = pendingAdminCampaign.get(fromJid);
         pendingAdminCampaign.delete(fromJid);
 
-        await provider.sendMessage(
-            fromJid,
+        await sendReply(
             `🚀 *Iniciando difusión masiva a ${campaign.count} clientes...*\n` +
             `Se enviará de manera secuencial con pausas anti-ban de 7 segundos. Te informaré los avances automáticamente.\n\n` +
-            `_Para interrumpir en cualquier momento, escribe *!cancelar*._`,
-            {}
+            `_Para interrumpir en cualquier momento, escribe *!cancelar*._`
         );
 
         await startBroadcast({
@@ -538,7 +623,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
             mediaPath: campaign.mediaPath,
             recipients: campaign.recipients,
             delaySeconds: 7,
-            adminPhone: fromJid,
+            adminPhone: advisorDeliverJid,
             initiator: 'WHATSAPP'
         });
 
@@ -548,21 +633,21 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     if (cmd === '!cancelar') {
         if (pendingAdminCampaign.has(fromJid)) {
             pendingAdminCampaign.delete(fromJid);
-            await provider.sendMessage(fromJid, '❌ Difusión masiva pendiente descartada con éxito.', {});
+            await sendReply('❌ Difusión masiva pendiente descartada con éxito.');
             return { handled: true, command: cmd, success: true };
         }
 
         if (isBroadcasting()) {
             if (!permissions.canBroadcast && role !== 'admin') {
-                await provider.sendMessage(fromJid, '🚫 No tienes permiso para detener la difusión masiva en curso.', {});
+                await sendReply('🚫 No tienes permiso para detener la difusión masiva en curso.');
                 return { handled: true, command: cmd, success: false, reason: 'FORBIDDEN_BROADCAST' };
             }
             await cancelBroadcast();
-            await provider.sendMessage(fromJid, '🛑 Deteniendo difusión masiva en progreso. Se completarán los envíos en tránsito y se detendrá.', {});
+            await sendReply('🛑 Deteniendo difusión masiva en progreso. Se completarán los envíos en tránsito y se detendrá.');
             return { handled: true, command: cmd, success: true };
         }
 
-        await provider.sendMessage(fromJid, 'ℹ️ No tienes ninguna difusión pendiente ni activa para cancelar.', {});
+        await sendReply('ℹ️ No tienes ninguna difusión pendiente ni activa para cancelar.');
         return { handled: true, command: cmd, success: true };
     }
 
@@ -571,12 +656,11 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     // =========================================================================
     if (cmd === '!equipo' || cmd === '!asesores') {
         if (role !== 'admin') {
-            await provider.sendMessage(fromJid, '🚫 Este comando está reservado únicamente para Administradores Generales.', {});
+            await sendReply('🚫 Este comando está reservado únicamente para Administradores Generales.');
             return { handled: true, command: cmd, success: false, reason: 'ADMIN_ONLY' };
         }
 
         const total = BOT_ADVISORS.length;
-        const activeList = BOT_ADVISORS.filter(a => a.active !== false);
         let teamMsg = `👥 *EQUIPO DE ASESORES CAD IMPRESIONES (${total}):*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
         BOT_ADVISORS.forEach((a, idx) => {
@@ -589,7 +673,7 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
         });
 
         teamMsg += `_Para modificar asesores o permisos, accede al Panel de Control Web._`;
-        await provider.sendMessage(fromJid, teamMsg, {});
+        await sendReply(teamMsg);
         return { handled: true, command: cmd, success: true };
     }
 
@@ -598,16 +682,14 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
         const schedMsg = `🕒 *HORARIO DE ATENCIÓN ACTUAL:*\n\n${summary}\n\n` +
             `Modo actual: *${BOT_SCHEDULE.mode || 'auto'}*\n` +
             `_Modifica este horario desde la pestaña Horarios del Dashboard._`;
-        await provider.sendMessage(fromJid, schedMsg, {});
+        await sendReply(schedMsg);
         return { handled: true, command: cmd, success: true };
     }
 
     // Comando no reconocido
-    await provider.sendMessage(
-        fromJid,
+    await sendReply(
         `❓ *Comando no reconocido:* \`${cmd}\`\n\n` +
-        `Escribe *!ayuda* para ver la lista completa de comandos a los que tienes acceso.`,
-        {}
+        `Escribe *!ayuda* para ver la lista completa de comandos a los que tienes acceso.`
     );
     return { handled: true, command: cmd, success: false, reason: 'UNKNOWN_COMMAND' };
 };

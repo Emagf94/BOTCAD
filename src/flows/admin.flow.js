@@ -29,6 +29,7 @@ import {
 } from '../services/broadcastService.js';
 import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
+import { notifySupportAdvisors } from '../services/advisorService.js';
 
 // ==========================================
 // HELPERS DE SOPORTE Y NOTIFICACIÓN
@@ -610,34 +611,16 @@ export const flowAsesor = addKeyword(['humano', 'asesor', 'persona'])
         const pendingCount = position > 1 ? ` (+${position - 1} en espera)` : '';
 
         try {
-            let supportPhones = normalizeAdminJids(BOT_SETTINGS.adminSupportPhone || '573184849332@c.us, 573135363218@c.us');
-            const isTest = isTestPhone(ctx.from);
-            if (isTest && BOT_SCHEDULE?.testMode?.notifyOnlyTestAdvisors) {
-                const testJids = (BOT_SCHEDULE.testMode.testPhones || []).map(p => {
-                    let clean = String(p).replace(/\D/g, '');
-                    if (clean.length === 10) clean = '57' + clean;
-                    return `${clean}@c.us`;
-                });
-                if (testJids.length > 0) {
-                    supportPhones = testJids;
-                }
-            }
-
-            const prefix = isTest ? '🧪 *[PRUEBA / CLIENTE TEST]*\n' : '';
-            const msgAdmin = `${prefix}🚨 *Solicitud de Soporte*\n\n` +
-                `👤 *Cliente:* ${finalName}\n` +
-                `📱 *Teléfono:* ${finalPhone}\n` +
-                `📝 *Asunto:* ${asunto}\n\n` +
-                `Para atender este chat, envía:\n*!atender*${pendingCount}`;
-
-            for (const phone of supportPhones) {
-                const targetId = phone.includes('@') ? phone : `${phone}@c.us`;
-                try {
-                    await provider.sendMessage(targetId, msgAdmin, {});
-                } catch(e) {}
-            }
+            await notifySupportAdvisors(provider, {
+                clientName: finalName,
+                clientPhone: finalPhone,
+                clientJid: ctx.from,
+                subject: asunto,
+                position,
+                isTest: isTestPhone(ctx.from)
+            });
         } catch (error) {
-            console.error("Error enviando mensaje a asesores:", error);
+            console.error("❌ Error enviando mensaje a asesores:", error);
         }
 
         let clientMsg = '👨‍💻 *Contacto Directo con un Asesor*\n\n';

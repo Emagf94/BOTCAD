@@ -89,21 +89,28 @@ export const removeActiveBridge = (fromOrJid) => {
     if (!fromOrJid) return;
     const partner = findActiveBridge(fromOrJid);
     const raw = String(fromOrJid);
-    const cleanFrom = raw.split('@')[0].replace(/\D/g, '');
+    const cleanFrom = raw.split('@')[0].split(':')[0].replace(/\D/g, '');
 
     activeBridgeChats.delete(raw);
     if (cleanFrom) activeBridgeChats.delete(cleanFrom);
 
+    let partnerRaw = '';
+    let partnerClean = '';
     if (partner) {
-        const partnerRaw = String(partner);
-        const partnerClean = partnerRaw.split('@')[0].replace(/\D/g, '');
+        partnerRaw = String(partner);
+        partnerClean = partnerRaw.split('@')[0].split(':')[0].replace(/\D/g, '');
         activeBridgeChats.delete(partnerRaw);
         if (partnerClean) activeBridgeChats.delete(partnerClean);
     }
 
     for (const [key, val] of Array.from(activeBridgeChats.entries())) {
-        const cleanKey = String(key).split('@')[0].replace(/\D/g, '');
-        if ((cleanFrom && cleanKey === cleanFrom) || (partner && String(val).includes(cleanFrom))) {
+        const cleanKey = String(key).split('@')[0].split(':')[0].replace(/\D/g, '');
+        const valStr = String(val);
+        const valClean = valStr.split('@')[0].split(':')[0].replace(/\D/g, '');
+
+        if (cleanFrom && (cleanKey === cleanFrom || key.includes(cleanFrom) || valClean === cleanFrom || valStr.includes(cleanFrom))) {
+            activeBridgeChats.delete(key);
+        } else if (partnerClean && (cleanKey === partnerClean || key.includes(partnerClean) || valClean === partnerClean || valStr.includes(partnerClean))) {
             activeBridgeChats.delete(key);
         }
     }

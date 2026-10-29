@@ -449,11 +449,81 @@ export const initBotConfig = async () => {
 
     // 6. Sincronizar Asesores y Permisos Dinámicos
     const advisorsRef = doc(db, 'config', 'advisors');
+
+    const applyAdvisorsAndScheduleData = (data) => {
+        if (!data) return;
+        const rawList = Array.isArray(data?.advisors) ? data.advisors : (Array.isArray(data?.list) ? data.list : []);
+        const normalizedList = rawList.map(a => {
+            const isAdminRole = (a.role === 'admin');
+            return {
+                ...a,
+                canManageSupport: a.canManageSupport !== undefined ? !!a.canManageSupport : true,
+                canBroadcast: a.canBroadcast !== undefined ? !!a.canBroadcast : isAdminRole
+            };
+        });
+        BOT_ADVISORS.length = 0;
+        BOT_ADVISORS.push(...normalizedList);
+
+        // Recomputar teléfonos de soporte y comandos activos para compatibilidad total
+        const activeSupport = rawList
+            .filter(a => a.active !== false && a.receiveSupport !== false && a.phone)
+            .map(a => {
+                let p = String(a.phone).replace(/\D/g, '');
+                if (p.length === 10) p = '57' + p;
+                return `${p}@c.us`;
+            });
+
+        const activeEscapes = rawList
+            .filter(a => a.active !== false && a.canExecuteCommands !== false)
+            .flatMap(a => {
+                let p = String(a.phone || '').replace(/\D/g, '');
+                const l = String(a.lid || '').replace(/\D/g, '');
+                const res = [];
+                if (p) {
+                    res.push(p);
+                    if (p.length === 10) res.push('57' + p);
+                    if (p.length === 12 && p.startsWith('57')) res.push(p.substring(2));
+                }
+                if (l) res.push(l);
+                return res;
+            })
+            .filter(Boolean);
+
+        if (activeSupport.length > 0) {
+            BOT_SETTINGS.adminSupportPhone = activeSupport.join(', ');
+        }
+        if (activeEscapes.length > 0) {
+            BOT_SETTINGS.adminEscapes = Array.from(new Set([...(BOT_SETTINGS.adminEscapes || []), ...activeEscapes]));
+        }
+
+        // Sincronizar Horario de Atención y Modo de Prueba de Asesores
+        if (data?.schedule) {
+            Object.assign(BOT_SCHEDULE, {
+                ...DEFAULT_SCHEDULE,
+                ...data.schedule,
+                days: {
+                    ...DEFAULT_SCHEDULE.days,
+                    ...(data.schedule.days || {})
+                },
+                testMode: {
+                    ...DEFAULT_SCHEDULE.testMode,
+                    ...(data.schedule.testMode || {})
+                }
+            });
+            console.log(`⚡ [SYNC] Horarios de atención actualizados (Modo: ${BOT_SCHEDULE.mode}, TestMode: ${BOT_SCHEDULE.testMode?.enabled ? 'ACTIVO' : 'INACTIVO'}).`);
+        }
+
+        console.log(`⚡ [SYNC] Asesores actualizados (${rawList.length} registrados, ${activeSupport.length} activos en soporte).`);
+    };
+
     try {
         const snap = await getDoc(advisorsRef);
         if (!snap.exists()) {
             console.log('📝 Creando documento inicial de asesores en Firestore...');
             await setDoc(advisorsRef, { advisors: BOT_ADVISORS, list: BOT_ADVISORS, updatedAt: new Date().toISOString() }, { merge: true });
+        } else {
+            // Aplicar de forma síncrona en el arranque inicial
+            applyAdvisorsAndScheduleData(snap.data());
         }
     } catch (err) {
         console.error('Error comprobando documento de asesores:', err);
@@ -461,69 +531,7 @@ export const initBotConfig = async () => {
 
     onSnapshot(advisorsRef, (snapshot) => {
         if (snapshot.exists()) {
-            const data = snapshot.data();
-            const rawList = Array.isArray(data?.advisors) ? data.advisors : (Array.isArray(data?.list) ? data.list : []);
-            const normalizedList = rawList.map(a => {
-                const isAdminRole = (a.role === 'admin');
-                return {
-                    ...a,
-                    canManageSupport: a.canManageSupport !== undefined ? !!a.canManageSupport : true,
-                    canBroadcast: a.canBroadcast !== undefined ? !!a.canBroadcast : isAdminRole
-                };
-            });
-            BOT_ADVISORS.length = 0;
-            BOT_ADVISORS.push(...normalizedList);
-
-            // Recomputar teléfonos de soporte y comandos activos para compatibilidad total
-            const activeSupport = rawList
-                .filter(a => a.active !== false && a.receiveSupport !== false && a.phone)
-                .map(a => {
-                    let p = String(a.phone).replace(/\D/g, '');
-                    if (p.length === 10) p = '57' + p;
-                    return `${p}@c.us`;
-                });
-
-            const activeEscapes = rawList
-                .filter(a => a.active !== false && a.canExecuteCommands !== false)
-                .flatMap(a => {
-                    let p = String(a.phone || '').replace(/\D/g, '');
-                    const l = String(a.lid || '').replace(/\D/g, '');
-                    const res = [];
-                    if (p) {
-                        res.push(p);
-                        if (p.length === 10) res.push('57' + p);
-                        if (p.length === 12 && p.startsWith('57')) res.push(p.substring(2));
-                    }
-                    if (l) res.push(l);
-                    return res;
-                })
-                .filter(Boolean);
-
-            if (activeSupport.length > 0) {
-                BOT_SETTINGS.adminSupportPhone = activeSupport.join(', ');
-            }
-            if (activeEscapes.length > 0) {
-                BOT_SETTINGS.adminEscapes = Array.from(new Set([...(BOT_SETTINGS.adminEscapes || []), ...activeEscapes]));
-            }
-
-            // Sincronizar Horario de Atención y Modo de Prueba de Asesores
-            if (data?.schedule) {
-                Object.assign(BOT_SCHEDULE, {
-                    ...DEFAULT_SCHEDULE,
-                    ...data.schedule,
-                    days: {
-                        ...DEFAULT_SCHEDULE.days,
-                        ...(data.schedule.days || {})
-                    },
-                    testMode: {
-                        ...DEFAULT_SCHEDULE.testMode,
-                        ...(data.schedule.testMode || {})
-                    }
-                });
-                console.log(`⚡ [SYNC] Horarios de atención actualizados (Modo: ${BOT_SCHEDULE.mode}, TestMode: ${BOT_SCHEDULE.testMode?.enabled ? 'ACTIVO' : 'INACTIVO'}).`);
-            }
-
-            console.log(`⚡ [SYNC] Asesores actualizados en tiempo real (${rawList.length} registrados, ${activeSupport.length} activos en soporte).`);
+            applyAdvisorsAndScheduleData(snapshot.data());
         }
     }, (err) => {
         console.error('Error en listener de asesores Firestore:', err);
