@@ -22,6 +22,7 @@ import {
     interpolateVariables
 } from './broadcastService.js';
 import { autoLinkAdvisorLid, normalizePhoneVariants } from './advisorAuthService.js';
+import { handleFacturaUpload } from './invoiceService.js';
 
 /**
  * Notifica a todos los asesores autorizados cuando un cliente es atendido por un asesor.
@@ -163,6 +164,7 @@ export const buildHelpMenu = (authInfo) => {
 
     // Utilidades
     helpText += `📱 *UTILIDADES:*\n` +
+        `• *!factura* : Cargar una factura electrónica en PDF al sistema.\n` +
         `• *!vincular* : Comprobar y re-vincular este dispositivo WhatsApp (@lid).\n` +
         `• *!ayuda* : Mostrar este menú de comandos.\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -269,6 +271,14 @@ export const dispatchAdvisorCommand = async (param1, param2, param3) => {
     if (cmd === '!ayuda' || cmd === '!comandos' || cmd === '!menu') {
         const helpMsg = buildHelpMenu(authInfo);
         await sendReply(helpMsg);
+        return { handled: true, command: cmd, success: true };
+    }
+
+    // =========================================================================
+    // COMANDO: !factura (Carga de Factura Electrónica)
+    // =========================================================================
+    if (cmd === '!factura') {
+        await handleFacturaUpload(ctx, provider);
         return { handled: true, command: cmd, success: true };
     }
 

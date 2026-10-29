@@ -298,7 +298,19 @@ export const flowMenuCarnets = addKeyword(EVENTS.ACTION)
     });
 
 export const flowMenuOtrosServicios = addKeyword(EVENTS.ACTION)
-    .addAnswer(['✨ *Otros Servicios*', '*1.* Sublimación (Mugs, Camisetas...)', '*2.* Carnets y Cuerdas', '*3.* Impresión UV 39x29', '*4.* Diseño Sencillo (Pendón)', '*5.* Placa Nomenclatura', '*6.* Placa Reconocimiento', '*7.* Escáner Planos A0/A1/A2', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
+    .addAnswer([
+        '✨ *Otros Servicios y Sellos*',
+        '*1.* Sublimación (Mugs, Camisetas...)',
+        '*2.* Carnets y Cuerdas',
+        '*3.* Impresión UV 39x29',
+        '*4.* Diseño Sencillo (Pendón)',
+        '*5.* Placa Nomenclatura',
+        '*6.* Placa Reconocimiento',
+        '*7.* Escáner Planos A0/A1/A2',
+        '*8.* 🔏 Sellos (Automáticos, Fechadores, Bolsillo...)',
+        '',
+        '🛑 *0.* Cancelar y volver al menú principal'
+    ].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
@@ -310,12 +322,13 @@ export const flowMenuOtrosServicios = addKeyword(EVENTS.ACTION)
         if (op === '0') return gotoFlow(flowCancelar);
         if (op === '1') return gotoFlow(flowMenuSublimacion);
         if (op === '2') return gotoFlow(flowMenuCarnets);
+        if (op === '8') return gotoFlow(flowMenuSellos);
         
         const items = {
             '3': 'Impresión UV 39x29', '4': 'Diseño Sencillo (Pendón)', '5': 'Placa Nomenclatura', '6': 'Placa Reconocimiento', '7': 'Escáner A0/A1/A2'
         };
         const sel = items[op];
-        if (!sel) return fallBack('❌ Opción inválida. Responde del 1 al 7, o 0 para cancelar.');
+        if (!sel) return fallBack('❌ Opción inválida. Responde del 1 al 8, o 0 para cancelar.');
         await state.update({ itemName: sel, basePrice: PRICES.otros[sel] });
         return gotoFlow(flowInicializarPedido);
     });

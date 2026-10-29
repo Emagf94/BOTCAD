@@ -75,6 +75,11 @@ import {
     flowResumenPedido
 } from './payment.flow.js';
 
+import {
+    flowFacturaElectronica,
+    flowSeleccionarFactura
+} from './factura.flow.js';
+
 // Arreglo unificado con todos los flujos para inicializar el bot
 export const allFlows = [
     flowWelcome,
@@ -128,7 +133,9 @@ export const allFlows = [
     flowCarteleraMaterial,
     flowEnvioDirectoArchivos,
     flowEnvioDirectoArchivosLoop,
-    flowEnvioDirectoComentario
+    flowEnvioDirectoComentario,
+    flowFacturaElectronica,
+    flowSeleccionarFactura
 ];
 
 export default allFlows;
@@ -186,5 +193,7 @@ export {
     flowRecibirPago,
     flowPagoEfectivo,
     flowOpcionesPago,
-    flowResumenPedido
+    flowResumenPedido,
+    flowFacturaElectronica,
+    flowSeleccionarFactura
 };

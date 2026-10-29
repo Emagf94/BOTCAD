@@ -27,7 +27,6 @@ import {
     pendingAdminCampaign,
     interpolateVariables
 } from '../services/broadcastService.js';
-import { botInstance } from '../app.js';
 import { flowCancelar, flowInactividad, flowMainMenu } from './main.flow.js';
 import { notifySupportAdvisors } from '../services/advisorService.js';
 

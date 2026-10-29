@@ -18,6 +18,7 @@ import { initBroadcastService } from './services/broadcastService.js';
 import { initAdvisorService } from './services/advisorService.js';
 import { resolveAdvisorIdentity, isAdmin } from './services/advisorAuthService.js';
 import { dispatchAdvisorCommand } from './services/commandDispatcher.js';
+import { handleFacturaUpload, isWaitingFacturaUpload } from './services/invoiceService.js';
 
 // Cargar variables de entorno desde .env si existe (nativo en Node 20+)
 if (typeof process.loadEnvFile === 'function') {
@@ -108,6 +109,15 @@ const main = async () => {
         const rawBody = (messageCtxInComing?.body || '').trim();
         const isCommand = rawBody.startsWith('!');
         const activeClientPhone = findActiveBridge(from);
+
+        // ═════════════════════════════════════════════════════════════════════
+        // PILAR 0: CARGA DE FACTURAS ELECTRÓNICAS (!factura)
+        // ═════════════════════════════════════════════════════════════════════
+        // Cualquier número que envíe !factura (o esté en espera de subir el PDF)
+        if (rawBody.toLowerCase().startsWith('!factura') || isWaitingFacturaUpload(from)) {
+            const handled = await handleFacturaUpload(messageCtxInComing, adapterProvider);
+            if (handled) return;
+        }
 
         // ═════════════════════════════════════════════════════════════════════
         // PILAR 1: INTERCEPTOR MAESTRO DE COMANDOS DE ASESORES / ADMINISTRADORES

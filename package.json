@@ -28,6 +28,7 @@
     "firebase": "^12.19.0",
     "node-windows": "^1.0.0-beta.8",
     "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
     "puppeteer": "^25.12.0"
   },
   "devDependencies": {

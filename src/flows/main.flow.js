@@ -28,6 +28,7 @@ import {
     flowMenuOtrosServicios,
     flowMenuSellos
 } from './products.flow.js';
+import { flowFacturaElectronica } from './factura.flow.js';
 
 // ==========================================
 // FLUJOS PRINCIPALES, CANCELACIÓN Y BIENVENIDA
@@ -66,8 +67,8 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
             '*2.* 📐 Planos CAD',
             '*3.* 📄 Impresión Documentos y Fotos',
             '*4.* 🏙️ Gran Formato (Pendones, Adhesivos...)',
-            '*5.* 🎁 Otros Servicios (Sublimación, Carnets...)',
-            '*6.* 🔏 Sellos',
+            '*5.* 🎁 Otros Servicios y Sellos (Sublimación, Carnets, Sellos...)',
+            '*6.* 📄 Factura Electrónica',
             '*7.* 📂 Envío Directo de Archivos',
             '*8.* 💳 Métodos de Pago',
             '*9.* ❓ Preguntas Frecuentes',
@@ -125,7 +126,7 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                 await flowDynamic([
                     '👉 *Marca la OPCIÓN 7* (*Envío Directo de Archivos*): Si deseas que un asesor lo revise personalmente, te cotice a medida o si tienes indicaciones especiales.',
                     '',
-                    '👉 *O marca cualquiera de las opciones (1 al 6):* Según el tipo de trabajo que requieras (*1* Carteleras, *2* Planos CAD, *3* Documentos, *4* Gran Formato, etc.).',
+                    '👉 *O marca cualquiera de las opciones (1 al 6):* Según el tipo de trabajo o servicio que requieras (*1* Carteleras, *2* Planos CAD, *3* Documentos, *4* Gran Formato, *5* Otros Servicios y Sellos, *6* Factura Electrónica).',
                     '',
                     'Escribe el *número* de la opción para continuar 👇'
                 ].join('\n'));
@@ -173,7 +174,7 @@ export const flowMainMenu = addKeyword(EVENTS.ACTION)
                 '3': flowMenuDocFotos,
                 '4': flowMenuGranFormato,
                 '5': flowMenuOtrosServicios,
-                '6': flowMenuSellos,
+                '6': flowFacturaElectronica,
                 '7': flowEnvioDirectoArchivos,
                 '8': flowPagosFAQ,
                 '9': flowFAQ,
