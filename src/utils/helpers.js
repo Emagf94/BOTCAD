@@ -200,7 +200,13 @@ export const safeSendPaymentMedia = async (provider, jid, caption = '') => {
         // Fallback si no se pudo enviar multimedia
         if (!sent) {
             console.warn(`⚠️ [safeSendPaymentMedia] No se pudo enviar imagen QR, enviando texto alternativo a ${jid}`);
-            if (caption) await provider.sendMessage(jid, caption, {});
+            if (caption) {
+                try {
+                    await provider.sendMessage(jid, caption, {});
+                } catch (eFallbackText) {
+                    console.warn(`⚠️ [safeSendPaymentMedia] Fallback texto falló: ${eFallbackText.message}`);
+                }
+            }
         }
         return sent;
     } catch (err) {
@@ -314,7 +320,13 @@ export const safeSendLogo = async (provider, jid, caption = '') => {
         // Fallback si no se pudo enviar multimedia
         if (!sent) {
             console.warn(`⚠️ [safeSendLogo] No se pudo enviar imagen de logo, enviando texto alternativo a ${jid}`);
-            if (caption) await provider.sendMessage(jid, caption, {});
+            if (caption) {
+                try {
+                    await provider.sendMessage(jid, caption, {});
+                } catch (eFallbackText) {
+                    console.warn(`⚠️ [safeSendLogo] Fallback texto falló: ${eFallbackText.message}`);
+                }
+            }
         }
         return sent;
     } catch (err) {

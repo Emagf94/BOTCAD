@@ -514,11 +514,70 @@ export const patchWppMediaPrep = async (client) => {
                             window.WPP.whatsapp.MediaPrep.prepRawMedia = prepFn;
                         } catch (e) {}
                     }
-                    return true;
                 }
 
-                // Si MediaPrep ya tiene la función
-                return !!(window.WPP.whatsapp.MediaPrep && typeof window.WPP.whatsapp.MediaPrep.prepRawMedia === 'function');
+                // 3. Proteger UserPrefs.getMeLidUserOrThrow ante descontinuación o cambios en WhatsApp Web
+                try {
+                    const up = window.WPP.whatsapp.UserPrefs;
+                    if (up) {
+                        if (typeof up.getMeLidUserOrThrow !== 'function') {
+                            up.getMeLidUserOrThrow = function() {
+                                if (typeof up.getMaybeMeLidUser === 'function') {
+                                    const lid = up.getMaybeMeLidUser();
+                                    if (lid) return lid;
+                                }
+                                if (typeof up.getMaybeMeUser === 'function') return up.getMaybeMeUser();
+                                if (typeof up.getMaybeMePnUser === 'function') return up.getMaybeMePnUser();
+                                if (window.WPP.conn && typeof window.WPP.conn.getMyUserWid === 'function') {
+                                    return window.WPP.conn.getMyUserWid();
+                                }
+                                return null;
+                            };
+                        }
+                    }
+                } catch (eUserPrefs) {}
+
+                // 4. Proteger getMyUserLid en window.WPP.conn y window.WPP.whatsapp
+                try {
+                    if (window.WPP.conn && typeof window.WPP.conn.getMyUserLid === 'function') {
+                        const origConnLid = window.WPP.conn.getMyUserLid;
+                        if (!origConnLid._isPatched) {
+                            const patchedConnLid = function() {
+                                try {
+                                    const res = origConnLid.apply(this, arguments);
+                                    if (res) return res;
+                                } catch (e) {}
+                                return (window.WPP.conn && typeof window.WPP.conn.getMyUserWid === 'function')
+                                    ? window.WPP.conn.getMyUserWid()
+                                    : null;
+                            };
+                            patchedConnLid._isPatched = true;
+                            window.WPP.conn.getMyUserLid = patchedConnLid;
+                        }
+                    }
+                    if (window.WPP.whatsapp && typeof window.WPP.whatsapp.getMyUserLid === 'function') {
+                        const origWaLid = window.WPP.whatsapp.getMyUserLid;
+                        if (!origWaLid._isPatched) {
+                            const patchedWaLid = function() {
+                                try {
+                                    const res = origWaLid.apply(this, arguments);
+                                    if (res) return res;
+                                } catch (e) {}
+                                return (window.WPP.whatsapp && typeof window.WPP.whatsapp.getMyUserWid === 'function')
+                                    ? window.WPP.whatsapp.getMyUserWid()
+                                    : ((window.WPP.conn && typeof window.WPP.conn.getMyUserWid === 'function') ? window.WPP.conn.getMyUserWid() : null);
+                            };
+                            patchedWaLid._isPatched = true;
+                            window.WPP.whatsapp.getMyUserLid = patchedWaLid;
+                        }
+                    }
+                } catch (eLid) {}
+
+                // 5. Retornar verdadero si MediaPrep o UserPrefs están operativos
+                return !!(
+                    (window.WPP.whatsapp.MediaPrep && typeof window.WPP.whatsapp.MediaPrep.prepRawMedia === 'function') ||
+                    (window.WPP.whatsapp.UserPrefs && typeof window.WPP.whatsapp.UserPrefs.getMeLidUserOrThrow === 'function')
+                );
             } catch (err) {
                 return false;
             }
