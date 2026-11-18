@@ -62,19 +62,19 @@ export default function ConnectionTab({ sessionData }) {
     }
   };
 
-  // Forzar Recarga de Sesión (page.reload() en Chromium)
+  // Forzar Sincronización de Estado en Vivo (Consulta inmediata a Chromium / WPP)
   const handleForceReload = async () => {
     setReloadingSession(true);
-    setActionMessage('Ordenando a Chromium recargar la página para reanudar sesión...');
+    setActionMessage('Sincronizando estado en vivo con WhatsApp Web...');
     try {
       await setDoc(doc(db, 'config', 'bot_session_commands'), {
-        action: 'FORCE_RELOAD',
+        action: 'FORCE_STATUS_SYNC',
         timestamp: Date.now()
       });
       setTimeout(() => {
         setReloadingSession(false);
         setActionMessage(null);
-      }, 6000);
+      }, 4000);
     } catch (err) {
       console.error(err);
       alert('Error: ' + err.message);
@@ -145,10 +145,10 @@ export default function ConnectionTab({ sessionData }) {
             disabled={reloadingSession}
             className="btn btn-secondary"
             style={{ padding: '9px 16px', fontSize: '0.86rem' }}
-            title="Recarga la pestaña de WhatsApp Web sin reiniciar el servidor ni perder credenciales"
+            title="Consulta a Chromium en tiempo real el estado de autenticación y sincroniza con la UI"
           >
             <RefreshCw size={16} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
-            {reloadingSession ? 'Recargando...' : 'Recargar Sesión (F5)'}
+            {reloadingSession ? 'Sincronizando...' : 'Sincronizar Estado en Vivo (F5)'}
           </button>
           <button
             onClick={handleReopenBrowser}
@@ -350,16 +350,28 @@ export default function ConnectionTab({ sessionData }) {
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '4px', marginBottom: '16px' }}>
                   Aparecerá aquí automáticamente en cuanto esté listo.
                 </p>
-                <button
-                  onClick={handleReopenBrowser}
-                  disabled={reloadingSession}
-                  className="btn btn-secondary"
-                  style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                  title="Si Chromium tardó en abrirse, pulsa para forzar su reapertura"
-                >
-                  <RefreshCw size={14} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
-                  {reloadingSession ? 'Reabriendo...' : 'Forzar Reapertura de Chromium'}
-                </button>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={handleForceReload}
+                    disabled={reloadingSession}
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                    title="Si el bot ya está funcionando en tu teléfono, pulsa para actualizar la vista"
+                  >
+                    <RefreshCw size={14} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
+                    {reloadingSession ? 'Sincronizando...' : 'Sincronizar Estado en Vivo'}
+                  </button>
+                  <button
+                    onClick={handleReopenBrowser}
+                    disabled={reloadingSession}
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 14px', fontSize: '0.8rem', opacity: 0.85 }}
+                    title="Si Chromium tardó en abrirse, pulsa para forzar su reapertura"
+                  >
+                    <RefreshCw size={14} className={reloadingSession ? 'spin' : ''} style={reloadingSession ? { animation: 'spin 1s linear infinite' } : {}} />
+                    {reloadingSession ? 'Reabriendo...' : 'Forzar Reapertura'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

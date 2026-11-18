@@ -10,7 +10,8 @@ import {
     restoreSessionIfNeeded,
     getGuardianProviderOptions,
     updateQRStatus,
-    updateHostPhone
+    updateHostPhone,
+    notifyMessageActivity
 } from './sessionGuard.js';
 import { activeBridgeChats, getWppClient, findActiveBridge, downloadAndSaveIncomingFile, deliverFileToRecipient } from './utils/helpers.js';
 import { patchWppMediaPrep } from './utils/fileHandler.js';
@@ -84,6 +85,9 @@ const main = async () => {
 
     // La intercepción ahora es manejada nativamente por el flujo de BuilderBot.
     adapterProvider.on('message', (payload) => {
+        if (payload?.from) {
+            notifyMessageActivity(payload.from);
+        }
         if (payload && payload.body) {
             try { fs.appendFileSync('debug.log', `[MSG] FROM: ${payload.from} | BODY: ${payload.body}\n`); } catch(e){}
         }
@@ -104,6 +108,9 @@ const main = async () => {
 
     botInstance.handleMsg = async (messageCtxInComing) => {
         const from = messageCtxInComing?.from;
+        if (from) {
+            notifyMessageActivity(from);
+        }
         if (!from) return originalHandleMsg(messageCtxInComing);
 
         const rawBody = (messageCtxInComing?.body || '').trim();

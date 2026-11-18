@@ -573,7 +573,23 @@ export const patchWppMediaPrep = async (client) => {
                     }
                 } catch (eLid) {}
 
-                // 5. Retornar verdadero si MediaPrep o UserPrefs están operativos
+                // 5. Proteger window.WAPI.isLoggedIn ante obsolescencia de ContactStore.checksum
+                try {
+                    if (!window.WAPI) window.WAPI = {};
+                    window.WAPI.isLoggedIn = function() {
+                        try {
+                            if (window.WPP?.conn?.isRegistered && window.WPP.conn.isRegistered()) return true;
+                            if (window.WPP?.conn?.isAuthenticated && window.WPP.conn.isAuthenticated()) return true;
+                            if (window.WPP?.conn?.isLoggedIn && window.WPP.conn.isLoggedIn()) return true;
+                            if (window.WPP?.conn?.getMyUserWid && window.WPP.conn.getMyUserWid()) return true;
+                            if (window.WPP?.whatsapp?.UserPrefs?.getMaybeMeUser && window.WPP.whatsapp.UserPrefs.getMaybeMeUser()) return true;
+                            if (document.querySelector('#pane-side') || document.querySelector('[data-testid="chat-list"]')) return true;
+                        } catch (e) {}
+                        return false;
+                    };
+                } catch (eWapi) {}
+
+                // 6. Retornar verdadero si MediaPrep o UserPrefs están operativos
                 return !!(
                     (window.WPP.whatsapp.MediaPrep && typeof window.WPP.whatsapp.MediaPrep.prepRawMedia === 'function') ||
                     (window.WPP.whatsapp.UserPrefs && typeof window.WPP.whatsapp.UserPrefs.getMeLidUserOrThrow === 'function')

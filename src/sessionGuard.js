@@ -94,6 +94,126 @@ let isReloading = false;
 let deepCheckTimeoutId = null;
 let lastProcessedCommandTimestamp = 0;
 
+/**
+ * Verificación exhaustiva y multi-capa del estado real de autenticación en WhatsApp Web.
+ * Compatible con versiones recientes de WhatsApp Web y @wppconnect/wa-js 4.8.x+.
+ * Supera la obsolescencia del antiguo WAPI.isLoggedIn (ContactStore.checksum).
+ */
+export async function checkClientAuthState(client) {
+    if (!isBrowserAlive(client)) {
+        return { isLoggedIn: false, hostPhone: null, hasQRScreen: false, socket: 'CLOSED' };
+    }
+
+    try {
+        const authData = await Promise.race([
+            client.page.evaluate(() => {
+                try {
+                    let isLoggedIn = false;
+                    let hostPhone = null;
+
+                    // 1. Inyectar o reparar WAPI.isLoggedIn para cualquier llamada legacy de WPPConnect
+                    if (!window.WAPI) window.WAPI = {};
+                    window.WAPI.isLoggedIn = function() {
+                        try {
+                            if (window.WPP?.conn?.isRegistered && window.WPP.conn.isRegistered()) return true;
+                            if (window.WPP?.conn?.isAuthenticated && window.WPP.conn.isAuthenticated()) return true;
+                            if (window.WPP?.conn?.isLoggedIn && window.WPP.conn.isLoggedIn()) return true;
+                            if (window.WPP?.conn?.getMyUserWid && window.WPP.conn.getMyUserWid()) return true;
+                            if (window.WPP?.whatsapp?.UserPrefs?.getMaybeMeUser && window.WPP.whatsapp.UserPrefs.getMaybeMeUser()) return true;
+                            if (document.querySelector('#pane-side') || document.querySelector('[data-testid="chat-list"]')) return true;
+                        } catch (e) {}
+                        return false;
+                    };
+
+                    // 2. Comprobar a través del módulo moderno WPP.conn
+                    if (window.WPP?.conn) {
+                        if (typeof window.WPP.conn.isRegistered === 'function') {
+                            isLoggedIn = !!window.WPP.conn.isRegistered();
+                        } else if (typeof window.WPP.conn.isAuthenticated === 'function') {
+                            isLoggedIn = !!window.WPP.conn.isAuthenticated();
+                        } else if (typeof window.WPP.conn.isLoggedIn === 'function') {
+                            isLoggedIn = !!window.WPP.conn.isLoggedIn();
+                        }
+                    }
+
+                    // 3. Extraer identidad de usuario (Wid / Phone)
+                    try {
+                        const wid = window.WPP?.conn?.getMyUserWid?.() ||
+                                    window.WPP?.whatsapp?.UserPrefs?.getMaybeMeUser?.() ||
+                                    window.WPP?.whatsapp?.UserPrefs?.getMeUser?.();
+                        if (wid) {
+                            isLoggedIn = true;
+                            const rawPhone = wid.user || (wid._serialized ? wid._serialized.split('@')[0] : null);
+                            if (rawPhone) {
+                                hostPhone = String(rawPhone).replace(/\D/g, '');
+                            }
+                        }
+                    } catch (eWid) {}
+
+                    // 4. Verificación física del DOM (Panel de chats)
+                    const hasChatPane = !!(
+                        document.querySelector('#pane-side') ||
+                        document.querySelector('[data-testid="chat-list"]') ||
+                        document.querySelector('[data-testid="chatlist-header"]') ||
+                        document.querySelector('header[data-testid="chatlist-header"]') ||
+                        document.querySelector('div[data-testid="intro-title"]')
+                    );
+                    if (hasChatPane) {
+                        isLoggedIn = true;
+                    }
+
+                    // 5. Verificar si hay pantalla de código QR activa en el DOM
+                    const qrCanvas = document.querySelector('canvas[aria-label="Scan this QR code to link a device"]') ||
+                                     document.querySelector('div[data-ref] canvas') ||
+                                     document.querySelector('canvas');
+                    const hasQRScreen = !isLoggedIn && !!qrCanvas;
+
+                    // 6. Estado del Socket
+                    const socketState = window.WPP?.whatsapp?.Socket?.state || 'UNKNOWN';
+
+                    return {
+                        isLoggedIn,
+                        hostPhone,
+                        hasQRScreen,
+                        socket: socketState
+                    };
+                } catch (errEval) {
+                    return { isLoggedIn: false, hostPhone: null, hasQRScreen: false, socket: 'ERROR', error: errEval.message };
+                }
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout verificando estado de auth (8s)')), 8000))
+        ]);
+
+        return authData;
+    } catch (err) {
+        console.warn(`⚠️ [SessionGuardian] checkClientAuthState falló: ${err.message}`);
+        return { isLoggedIn: false, hostPhone: null, hasQRScreen: false, socket: 'TIMEOUT' };
+    }
+}
+
+/**
+ * Notifica al Guardián que hubo actividad de mensajes (entrante o saliente).
+ * Si el estado en memoria no era 'CONNECTED', lo auto-cura de inmediato.
+ */
+export function notifyMessageActivity(from) {
+    if (currentStatus !== 'CONNECTED' || currentQrCode !== null) {
+        currentStatus = 'CONNECTED';
+        currentQrCode = null;
+        currentPairingCode = null;
+        stopActiveQRWatcher();
+        lastConnectedTimestamp = Date.now();
+        consecutivePingFailures = 0;
+        lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+        console.log(`🟢 [SessionGuardian] Actividad de mensajes detectada (${from || 'chat'}). Estado auto-curado a CONNECTED.`);
+        publishSessionStatus({
+            status: 'CONNECTED',
+            qrCode: null,
+            pairingCode: null,
+            lastMessage: lastLogMessage
+        });
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  PILAR 1: ARMADURA DE SISTEMA DE ARCHIVOS (ANTI-WIPE DE BUILDERBOT)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -665,12 +785,23 @@ export async function recoverChromiumBrowser(reason = 'UNEXPECTED_CLOSE') {
                 }
                 await attachWppClient(newVendor);
 
-                // Comprobar estado inicial tras relanzamiento
-                const logged = await newVendor.isLoggedIn().catch(() => null);
-                if (logged === true) {
+                // Comprobar estado inicial tras relanzamiento dando breve margen a hidratación
+                await new Promise(r => setTimeout(r, 2500));
+                const auth = await checkClientAuthState(newVendor);
+                if (auth.isLoggedIn) {
                     currentStatus = 'CONNECTED';
-                    lastLogMessage = 'Bot reconectado y operativo tras relanzamiento';
-                    publishSessionStatus({ status: 'CONNECTED', lastMessage: lastLogMessage });
+                    currentQrCode = null;
+                    currentPairingCode = null;
+                    if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
+                    lastLogMessage = `Bot reconectado y operativo tras relanzamiento (+${connectedHostPhone})`;
+                    console.log(`🟢 [SessionGuardian] ${lastLogMessage}`);
+                    publishSessionStatus({
+                        status: 'CONNECTED',
+                        hostPhone: connectedHostPhone,
+                        qrCode: null,
+                        pairingCode: null,
+                        lastMessage: lastLogMessage
+                    });
                 } else {
                     currentStatus = 'REQUIRES_AUTH';
                     lastLogMessage = 'Chromium relanzado. Esperando escaneo de código QR...';
@@ -718,13 +849,23 @@ export function startActiveQRWatcher(client) {
         }
 
         try {
-            // 1. Comprobar si ya se logueó
-            const isLogged = await currentClient.isLoggedIn().catch(() => null);
-            if (isLogged === true) {
-                console.log(`🟢 [SessionGuardian] WhatsApp Web reporta sesión iniciada. Deteniendo vigilante QR.`);
+            // 1. Comprobar si ya se logueó con verificación multi-capa
+            const auth = await checkClientAuthState(currentClient);
+            if (auth.isLoggedIn) {
+                if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
                 currentStatus = 'CONNECTED';
                 currentQrCode = null;
-                publishSessionStatus({ status: 'CONNECTED', qrCode: null });
+                currentPairingCode = null;
+                lastConnectedTimestamp = Date.now();
+                lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+                console.log(`🟢 [SessionGuardian] WhatsApp Web reporta sesión iniciada (+${connectedHostPhone}). Deteniendo vigilante QR.`);
+                publishSessionStatus({
+                    status: 'CONNECTED',
+                    hostPhone: connectedHostPhone,
+                    qrCode: null,
+                    pairingCode: null,
+                    lastMessage: lastLogMessage
+                });
                 stopActiveQRWatcher();
                 return;
             }
@@ -803,7 +944,36 @@ export function initRemoteCommandListener() {
 
             console.log(`📡 [SessionGuardian] Comando remoto recibido desde Dashboard: ${data.action}`);
 
-            if (data.action === 'REOPEN_BROWSER') {
+            if (data.action === 'FORCE_STATUS_SYNC' || data.action === 'REFRESH_STATUS') {
+                console.log(`🔄 [SessionGuardian] Comando remoto: Sincronización forzada de estado en vivo...`);
+                const client = activeClient || (providerRef ? await getWppClient(providerRef) : null);
+                if (isBrowserAlive(client)) {
+                    const auth = await checkClientAuthState(client);
+                    if (auth.isLoggedIn) {
+                        if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
+                        currentStatus = 'CONNECTED';
+                        currentQrCode = null;
+                        currentPairingCode = null;
+                        stopActiveQRWatcher();
+                        lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+                        console.log(`🟢 [SessionGuardian] Sincronización forzada: Estado confirmado CONNECTED (+${connectedHostPhone}).`);
+                        await publishSessionStatus({
+                            status: 'CONNECTED',
+                            hostPhone: connectedHostPhone,
+                            qrCode: null,
+                            pairingCode: null,
+                            lastMessage: lastLogMessage
+                        });
+                    } else if (auth.hasQRScreen) {
+                        currentStatus = 'REQUIRES_AUTH';
+                        await checkForQRScreen(client);
+                    } else {
+                        await publishSessionStatus({ status: currentStatus });
+                    }
+                } else {
+                    console.warn(`⚠️ [SessionGuardian] Chromium no disponible para sincronización.`);
+                }
+            } else if (data.action === 'REOPEN_BROWSER') {
                 console.log(`🌐 [SessionGuardian] Comando remoto: Forzar reapertura de Chromium y regeneración de QR.`);
                 await recoverChromiumBrowser('REMOTE_USER_REQUEST');
             } else if (data.action === 'REQUEST_PAIRING_CODE') {
@@ -920,21 +1090,29 @@ export async function attemptPageReload(client) {
         await new Promise(r => setTimeout(r, 8000));
 
         // Verificar si la sesión sigue viva dentro del chat
-        const inChat = await Promise.race([
-            client.isLoggedIn().catch(() => null),
+        const auth = await Promise.race([
+            checkClientAuthState(client),
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
-        ]).catch(() => null);
+        ]).catch(() => ({ isLoggedIn: false }));
 
-        if (inChat === true) {
+        if (auth.isLoggedIn) {
             consecutivePingFailures = 0;
             currentStatus = 'CONNECTED';
             currentQrCode = null;
+            currentPairingCode = null;
+            if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
             lastConnectedTimestamp = Date.now();
-            lastLogMessage = 'Reconexión exitosa tras recarga de página.';
-            console.log(`🟢 [SessionGuardian] Reconexión exitosa tras recarga de página.`);
+            lastLogMessage = `Reconexión exitosa tras recarga de página (+${connectedHostPhone})`;
+            console.log(`🟢 [SessionGuardian] ${lastLogMessage}`);
             stopActiveQRWatcher();
             triggerGentleKeepAlive(client);
-            publishSessionStatus({ status: 'CONNECTED', qrCode: null, lastMessage: lastLogMessage });
+            publishSessionStatus({
+                status: 'CONNECTED',
+                hostPhone: connectedHostPhone,
+                qrCode: null,
+                pairingCode: null,
+                lastMessage: lastLogMessage
+            });
             isReloading = false;
             return true;
         }
@@ -960,13 +1138,20 @@ function scheduleDeepConnectionCheck(client, state) {
         if (!isBrowserAlive(client)) return;
         try {
             console.log(`🔍 [SessionGuardian] Verificación profunda post-estado transitorio (${state})...`);
-            const isLogged = await client.isLoggedIn().catch(() => null);
-            if (isLogged === true) {
+            const auth = await checkClientAuthState(client);
+            if (auth.isLoggedIn) {
                 consecutivePingFailures = 0;
                 currentStatus = 'CONNECTED';
-                console.log(`🟢 [SessionGuardian] Verificación profunda: Sesión sigue conectada y saludable.`);
+                currentQrCode = null;
+                if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
+                console.log(`🟢 [SessionGuardian] Verificación profunda: Sesión sigue conectada y saludable (+${connectedHostPhone}).`);
                 stopActiveQRWatcher();
-                publishSessionStatus({ status: 'CONNECTED' });
+                publishSessionStatus({
+                    status: 'CONNECTED',
+                    hostPhone: connectedHostPhone,
+                    qrCode: null,
+                    pairingCode: null
+                });
                 return;
             }
 
@@ -990,14 +1175,21 @@ function handleUnpairedState(client) {
     setTimeout(async () => {
         try {
             const auth1 = await Promise.race([
-                client.isLoggedIn().catch(() => null),
+                checkClientAuthState(client),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-            ]).catch(() => null);
+            ]).catch(() => ({ isLoggedIn: false }));
 
-            if (auth1 === true) {
+            if (auth1.isLoggedIn) {
                 console.log(`🟢 [SessionGuardian] Falsa alarma de UNPAIRED (etapa 1). Sesión activa.`);
                 currentStatus = 'CONNECTED';
-                publishSessionStatus({ status: 'CONNECTED' });
+                currentQrCode = null;
+                if (auth1.hostPhone) connectedHostPhone = auth1.hostPhone;
+                publishSessionStatus({
+                    status: 'CONNECTED',
+                    hostPhone: connectedHostPhone,
+                    qrCode: null,
+                    pairingCode: null
+                });
                 triggerGentleKeepAlive(client);
                 return;
             }
@@ -1110,32 +1302,62 @@ function startZeroIdleHeartbeat(client) {
         }
 
         try {
-            // Micro-evaluación segura en el contexto del navegador (<10ms)
-            const evaluation = await Promise.race([
+            // Micro-evaluación segura en el contexto del navegador para mantener vivo el socket
+            await Promise.race([
                 currentClient.page.evaluate(() => {
                     try {
                         if (window.WPP?.conn?.setKeepAlive) window.WPP.conn.setKeepAlive(true);
-                        return {
-                            isOnline: window.WPP?.conn?.isOnline?.() ?? (window.WAPI?.isConnected?.() ?? true),
-                            state: window.WPP?.whatsapp?.Socket?.state ?? 'UNKNOWN',
-                            stream: window.WPP?.whatsapp?.Socket?.stream ?? 'UNKNOWN'
-                        };
-                    } catch {
-                        return { isOnline: true };
-                    }
+                    } catch { /* ignorar */ }
                 }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido (20s)')), 20000))
-            ]);
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de latido socket (15s)')), 15000))
+            ]).catch(() => null);
+
+            // Verificación exhaustiva y multi-capa de autenticación en WhatsApp Web
+            const authState = await checkClientAuthState(currentClient);
 
             // Si responde, el hilo de Chromium está 100% activo y vivo
             consecutivePingFailures = 0;
             lastHeartbeatTimestamp = Date.now();
-            
-            // Publicar actualización periódica de latido en Firestore
-            publishSessionStatus({
-                status: currentStatus === 'REQUIRES_AUTH' ? 'REQUIRES_AUTH' : 'CONNECTED',
-                lastHeartbeat: new Date().toISOString()
-            });
+
+            if (authState.isLoggedIn) {
+                if (authState.hostPhone && authState.hostPhone.length >= 8) {
+                    connectedHostPhone = authState.hostPhone;
+                }
+                const wasDisconnected = (currentStatus !== 'CONNECTED' || currentQrCode !== null);
+                currentStatus = 'CONNECTED';
+                currentQrCode = null;
+                currentPairingCode = null;
+                lastConnectedTimestamp = Date.now();
+                lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+
+                if (wasDisconnected) {
+                    console.log(`🟢 [SessionGuardian] Heartbeat auto-curó el estado de sesión a CONNECTED (+${connectedHostPhone}).`);
+                    stopActiveQRWatcher();
+                }
+
+                publishSessionStatus({
+                    status: 'CONNECTED',
+                    hostPhone: connectedHostPhone,
+                    qrCode: null,
+                    pairingCode: null,
+                    lastMessage: lastLogMessage,
+                    lastHeartbeat: new Date().toISOString()
+                });
+            } else if (authState.hasQRScreen) {
+                currentStatus = 'REQUIRES_AUTH';
+                lastLogMessage = 'Esperando vinculación de WhatsApp Web...';
+                startActiveQRWatcher(currentClient);
+                publishSessionStatus({
+                    status: 'REQUIRES_AUTH',
+                    lastMessage: lastLogMessage,
+                    lastHeartbeat: new Date().toISOString()
+                });
+            } else {
+                publishSessionStatus({
+                    status: currentStatus,
+                    lastHeartbeat: new Date().toISOString()
+                });
+            }
         } catch (err) {
             consecutivePingFailures++;
             console.warn(`⚠️ [GUARDIAN] Latido #${consecutivePingFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILS} sin respuesta: ${err.message}`);
@@ -1232,10 +1454,27 @@ async function attachWppClient(client) {
     // 4. Iniciar Latido Zero-Idle permanente
     startZeroIdleHeartbeat(client);
 
-    // 5. Si la sesión requiere autenticación, iniciar vigilante QR
-    if (currentStatus === 'REQUIRES_AUTH') {
-        startActiveQRWatcher(client);
-    }
+    // 5. Verificación inmediata de autenticación para sincronizar en tiempo real
+    checkClientAuthState(client).then((auth) => {
+        if (auth.isLoggedIn) {
+            if (auth.hostPhone) connectedHostPhone = auth.hostPhone;
+            currentStatus = 'CONNECTED';
+            currentQrCode = null;
+            currentPairingCode = null;
+            stopActiveQRWatcher();
+            lastLogMessage = `Bot conectado y operativo (+${connectedHostPhone})`;
+            console.log(`🟢 [SessionGuardian] Cliente verificado y conectado (+${connectedHostPhone})`);
+            publishSessionStatus({
+                status: 'CONNECTED',
+                hostPhone: connectedHostPhone,
+                qrCode: null,
+                pairingCode: null,
+                lastMessage: lastLogMessage
+            });
+        } else if (auth.hasQRScreen || currentStatus === 'REQUIRES_AUTH') {
+            startActiveQRWatcher(client);
+        }
+    }).catch(() => {});
 
     console.log(`✅ [SessionGuardian] Todas las defensas en vivo conectadas con éxito.\n`);
 }
@@ -1447,11 +1686,11 @@ export function initSessionGuard(provider) {
         try {
             const client = activeClient || await getWppClient(provider);
             if (client && client.page && !client.page.isClosed()) {
-                const isLoggedIn = await Promise.race([
-                    client.isLoggedIn().catch(() => null),
+                const auth = await Promise.race([
+                    checkClientAuthState(client),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-                ]);
-                if (isLoggedIn === true || isLoggedIn === null) {
+                ]).catch(() => ({ isLoggedIn: true })); // En duda, asumir falsa alarma para proteger sesión
+                if (auth.isLoggedIn) {
                     console.log(`🟢 [SessionGuardian] Verificación post-auth_failure: WhatsApp sigue autenticado. Falsa alarma.`);
                     triggerGentleKeepAlive(client);
                     return;
