@@ -11,7 +11,7 @@ import { flowInicializarPedido } from './orders.flow.js';
 
 // 1. Carteleras
 export const flowCarteleraMaterial = addKeyword(EVENTS.ACTION)
-    .addAnswer(['🎨 *Material de la Cartelera*', '*1.* Bond', '*2.* Cartulina / Opalina', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
+    .addAnswer(['🎨 *Material de la Cartelera*', '*1.* Bond', '*2.* Cartulina / Opalina', '*3.* Papel Fotográfico', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
@@ -31,8 +31,16 @@ export const flowCarteleraMaterial = addKeyword(EVENTS.ACTION)
             await state.update({ itemName: `Cartelera ${size} ${dimStr} (Bond)`, basePrice: PRICES.carteleras[size] });
         } else if (op === '2') {
             await state.update({ itemName: `Cartelera ${size} ${dimStr} (Cartulina/Opalina)`, basePrice: PRICES.carteleras_cartulina[size] });
+        } else if (op === '3') {
+            const photoPrices = {
+                'A0': PRICES.fotos?.['70x100'] ?? 60000,
+                'A1': PRICES.fotos?.['50x70'] ?? 35000,
+                'A2': PRICES.fotos?.['35x50'] ?? 25000,
+                'A3': PRICES.fotos?.['Tabloide'] ?? 20000
+            };
+            await state.update({ itemName: `Cartelera ${size} ${dimStr} (Papel Fotográfico)`, basePrice: photoPrices[size] || 0 });
         } else {
-            return fallBack('❌ Opción inválida. Responde 1, 2 o 0 para cancelar.');
+            return fallBack('❌ Opción inválida. Responde 1, 2, 3 o 0 para cancelar.');
         }
         
         return gotoFlow(flowInicializarPedido);
@@ -116,7 +124,19 @@ export const flowMenuPlanos = addKeyword(EVENTS.ACTION)
 
 // 3. Documentos y Fotos
 export const flowMenuFotos = addKeyword(EVENTS.ACTION)
-    .addAnswer(['📸 *Tamaño de Fotografía (Brillante/Mate)*', '*1.* 10x15 cm', '*2.* A4 / Carta (21.5x28 cm)', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
+    .addAnswer([
+        '📸 *Impresión en Papel Fotográfico (Brillante / Satinado)*',
+        'Selecciona el tamaño deseado:',
+        '',
+        '*1.* 10x15 cm',
+        '*2.* A4 / Carta (21.5x28 cm)',
+        '*3.* Tabloide (30x42 cm)',
+        '*4.* 35x50 cm (Cuarto de pliego)',
+        '*5.* 50x70 cm (Medio pliego)',
+        '*6.* 70x100 cm (Pliego completo)',
+        '',
+        '🛑 *0.* Cancelar y volver al menú principal'
+    ].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { state, gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
@@ -125,10 +145,17 @@ export const flowMenuFotos = addKeyword(EVENTS.ACTION)
         if (ctx?.idleFallBack) return gotoFlow(flowInactividad);
 
         if (ctx.body.trim() === '0') return gotoFlow(flowCancelar);
-        const sizes = {'1': '10x15', '2': 'Carta'};
+        const sizes = {
+            '1': '10x15',
+            '2': 'Carta',
+            '3': 'Tabloide',
+            '4': '35x50',
+            '5': '50x70',
+            '6': '70x100'
+        };
         const sel = sizes[ctx.body.trim()];
-        if (!sel) return fallBack('❌ Opción inválida. Responde 1, 2 o 0 para cancelar.');
-        await state.update({ itemName: `Fotografía ${sel}`, basePrice: PRICES.fotos[sel] });
+        if (!sel) return fallBack('❌ Opción inválida. Responde del 1 al 6, o 0 para cancelar.');
+        await state.update({ itemName: `Papel Fotográfico ${sel}`, basePrice: PRICES.fotos?.[sel] || 0 });
         return gotoFlow(flowInicializarPedido);
     });
 
@@ -188,7 +215,7 @@ export const flowDocTamano = addKeyword(EVENTS.ACTION)
     });
 
 export const flowMenuDocFotos = addKeyword(EVENTS.ACTION)
-    .addAnswer(['📄 *Documentos y Fotos*', '*1.* Impresión de Documentos', '*2.* Impresión de Fotografías', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
+    .addAnswer(['📄 *Documentos y Fotos*', '*1.* Impresión de Documentos', '*2.* Impresión de Fotografías / Papel Fotográfico', '', '🛑 *0.* Cancelar y volver al menú principal'].join('\n'), { capture: true, delay: 1000, idle: 600000 }, async (ctx, { gotoFlow, fallBack }) => {
         if (isAdmin(ctx.from) && ctx.body && typeof ctx.body === 'string' && ctx.body.trim().startsWith('!')) {
             console.log("=== ESCAPE HATCH TRIGGERED ===", ctx.body);
             if (ctx.body.trim().startsWith('!chatear') || ctx.body.trim().startsWith('!atender')) return gotoFlow(flowAdminBridge);
