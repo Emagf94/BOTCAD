@@ -43,8 +43,12 @@ export const BOT_PRICES = {
     },
     fotos: {
         '10x15': 4000,
+        'Carta': 4000,
         'A4': 4000,
-        'Carta': 4000
+        'Tabloide': 20000,
+        '35x50': 25000,
+        '50x70': 35000,
+        '70x100': 60000
     },
     documentos: {
         'bn_bond': { 'Carta': 500, 'Oficio': 1500, 'Tabloide': 2000 },
